@@ -40,6 +40,18 @@ tiers:
                      back to their original tabs
     on_state_ed~     word-wrap toggle on one half: propagate to the
                      other half and re-align
+    on_tab_change~   active UI-tab changed: the LAZY toolbar pass -- a
+                     session-restored compare tab's toolbar is not
+                     created at startup anymore, it is created the
+                     moment the user actually switches to that tab
+                     (CudaText suppresses this event during session
+                     load/close, so it fires exactly on user visits)
+    on_focus~        belt-and-braces twin of on_tab_change: an editor
+                     getting focus also covers the activations a tab
+                     switch event misses (e.g. the neighbor tab that
+                     is auto-activated by closing the active tab);
+                     a cheap dict-lookup no-op once the visited tab's
+                     toolbar exists
 
 * OPTION-GATED set -- compare set PLUS the named setting on (a config()
   reload re-evaluates these, so the Options dialog takes effect at
@@ -198,6 +210,26 @@ def build_events(on_key_filter):
         _Ev('on_state_ed',
             # EDSTATE_WRAP on one half: propagate the wrap mode to the
             # other half and re-align the compare.
+            lambda s: s.has_compares),
+        _Ev('on_tab_change',
+            # The user switched the active UI-tab: the LAZY toolbar
+            # pass -- create the newly visited compare tab's toolbar
+            # on demand (see Command.on_tab_change). Startup restore
+            # no longer creates a toolbar per restored diff tab (with
+            # many of them, N idle docked forms became part of every
+            # CudaText start although the user only looks at one);
+            # each unvisited tab's toolbar appears the moment the tab
+            # is activated. on_tab_change is suppressed by CudaText
+            # during session load/close, so it is exactly the 'user
+            # visited this tab' signal.
+            lambda s: s.has_compares),
+        _Ev('on_focus',
+            # Belt-and-braces twin of on_tab_change (same lazy
+            # toolbar pass): an editor getting focus also catches the
+            # activations a tab-switch event misses -- e.g. the
+            # neighbor tab auto-activated when the active tab closes.
+            # Cheap no-op when the visited tab already has its
+            # toolbar (one dict lookup before returning).
             lambda s: s.has_compares),
 
         # ----------------------------------------------------------

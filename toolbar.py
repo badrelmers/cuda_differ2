@@ -1890,9 +1890,15 @@ def update_theme_all():
 
 
 def sync_all(cmd):
-    """Make the set of toolbars match the current sessions and options
-    after a config change: destroy toolbars of closed tabs or when
-    show_toolbar is off, create missing ones, apply show_btn_text."""
+    """Make the set of toolbars match the current options after a config
+    change: destroy toolbars of closed tabs or when show_toolbar is off,
+    apply show_btn_text and refresh the Ignore menus of the surviving
+    ones, and create the missing toolbar of the FOCUSED compare tab
+    only. The toolbars of unvisited compare tabs stay lazy (each is
+    created on its first activation -- on_tab_change / on_focus, see
+    cuda_differ2._ensure_toolbar_for_visit): a config dialog OK must
+    not turn 'lazy' back into 'create N idle forms at once', it only
+    has to show the effect on the tab the user is looking at."""
     show = bool(cmd.cfg.get('show_toolbar', True))
     show_text = bool(cmd.cfg.get('show_btn_text', True))
     for key in list(_TOOLBARS):
@@ -1907,13 +1913,20 @@ def sync_all(cmd):
             del _TOOLBARS[key]
     if not show:
         return
-    for session in list(cmd._sessions.values()):
-        tb = _TOOLBARS.get(session.tab_id_str)
-        if tb is None:
-            ensure_for_session(cmd, session)
-        else:
+    for tb in list(_TOOLBARS.values()):
+        if tb.is_created():
             tb.set_show_text(show_text)
             tb.rebuild_ignore_menu()
+    # Lazy creation, focused tab only (None / not a compare tab: the
+    # next visit serves it).
+    a_ed = None
+    try:
+        a_ed = ct.ed
+        session = cmd._session_for(a_ed.get_prop(ct.PROP_TAB_ID))
+    except Exception:
+        session = None
+    if session is not None and _TOOLBARS.get(session.tab_id_str) is None:
+        ensure_for_session(cmd, session, a_ed)
 
 
 # ---------------------------------------------------------------------------

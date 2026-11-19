@@ -29,6 +29,14 @@ section=events
 ;   on_close~        teardown of the closing tab's session
 ;   on_save_pre~     Ctrl+S syncs dirty halves back to the originals
 ;   on_state_ed~     word-wrap propagation between the two halves
+;   on_tab_change~   LAZY toolbar pass: the compare toolbar of a
+;                    session-restored tab is created on its first
+;                    activation, not at startup (CudaText suppresses
+;                    this event during session load/close, so it fires
+;                    exactly on user visits)
+;   on_focus~        belt-and-braces twin of on_tab_change (catches
+;                    activations the tab-switch event misses, e.g.
+;                    the neighbor tab auto-activated by a close)
 ;
 ; the same, plus their option on (a config reload re-evaluates):
 ;   on_caret~        enable_sync_caret (caret mirroring)

@@ -965,21 +965,32 @@ line -- the descender room is scaled for high-DPI screens, the border
 line itself never is. The
 captions' texts can be turned off (icons only) with the option
 differ2.toolbar.show_btn_text; the whole toolbar can be hidden with
-differ2.toolbar.show_toolbar. Toolbars are restored at startup for
-compare tabs restored by the CudaText session, and follow UI theme
-switches (the background re-reads EdTextBg; the status label's text
-color re-reads EdTextFont of the same theme, so it stays readable on
-dark themes too -- a bare label would take the OS's black; the border
-line's color re-reads SplitMain).
+differ2.toolbar.show_toolbar. The toolbar is created LAZILY for
+session-restored compare tabs: at startup only the tab you are
+actually looking at gets its toolbar, and every other restored diff
+tab gets its own the moment you switch to it (this keeps a restart
+with many diff tabs cheap -- one toolbar's worth of GUI work instead
+of N). Toolbars follow UI theme switches (the background re-reads
+EdTextBg; the status label's text color re-reads EdTextFont of the
+same theme, so it stays readable on dark themes too -- a bare label
+would take the OS's black; the border line's color re-reads
+SplitMain).
 
 The toolbar's lifetime follows the tab's: it is destroyed when the
-compare tab is really closed. Nothing is cleaned up at app exit: the
-toolbar forms are owned by CudaText's main form, which frees them
-when the app terminates. (They are deliberately NOT destroyed inside
-on_close's app-exit branch: that event fires synthetically from
-CudaText's own exit loop, and GUI calls there re-enter the message
-processing between the plugin's state-file writes, which could cost
-the compare tabs their persisted session entries.)
+compare tab is really closed. Nothing is cleaned up at app exit --
+not the toolbar, not the overview panel, and no state file is
+written either: the toolbar / overview forms are owned by CudaText's
+main form, which frees them when the app terminates, and the
+persisted compare-tab registrations are already correct on disk (the
+unsaved-halves state is written the moment it changes, not at exit).
+(They are deliberately NOT destroyed inside on_close's app-exit
+branch: that event fires synthetically from CudaText's own exit
+loop, and GUI calls there re-enter the message processing nested in
+the exit, which could cost the compare tabs their persisted session
+entries; the old unregister-then-reregister dance there was two
+redundant state-file writes per diff tab, and the overview teardown
+joined its worker threads -- both were part of the 'closing CudaText
+takes seconds with several big compare tabs' cost.)
 
 == Ignore options ==
 
@@ -1176,11 +1187,12 @@ first tab close; APPSTATE_SESSION_LOAD_BEGIN arrives only after the
 closes, too late to be usable) and keeps every closed compare tab's
 persisted registration, because the tab still exists in the session file
 being left. When you switch back, the restored compare tabs are
-re-attached exactly like after a restart (per-tab session, toolbar,
-title color, dirty/saved state; run Recompare to start the compare), and
-closing them afterwards cleans up as usual. This needs a CudaText build
-with the APPSTATE_SESSION_LOAD_BEGIN_PRE event (a fresh build with the
-author's merged patch).
+re-attached exactly like after a restart (per-tab session, the
+active tab's toolbar -- the others get theirs on their first
+activation, title color, dirty/saved state; run Recompare to start
+the compare), and closing them afterwards cleans up as usual. This
+needs a CudaText build with the APPSTATE_SESSION_LOAD_BEGIN_PRE event
+(a fresh build with the author's merged patch).
 
 When you close a compare tab manually (not via app exit):
 - While a comparison is running, the tab is busy and cannot be closed
@@ -1806,8 +1818,8 @@ Toolbar section (see the "Toolbar" chapter above for details):
   the View dropdown (bars / gutters /
   overview visibility), Config, and a status label on the right
   (compare state + difference count). Every button has a tooltip; the
-  toolbar follows UI theme switches and is restored at startup for
-  session-restored compare tabs.
+  toolbar follows UI theme switches and is created lazily for
+  session-restored compare tabs (on the tab's first activation).
 - differ2.toolbar.show_btn_text: Show button texts in the toolbar
   (default: on)
   When on, buttons show "↻ Recompare", "↑ Prev", "↓ Next", "← Copy",

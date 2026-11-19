@@ -2156,8 +2156,10 @@ class Command:
             # anymore.)
             self.config()
             # Toolbars follow the (possibly changed) toolbar options:
-            # create missing ones, destroy the ones the option turned
-            # off, apply show_btn_text, refresh Ignore captions/menus
+            # destroy the ones the option turned off, apply show_btn_text
+            # and create the missing toolbar of the FOCUSED compare tab
+            # only (the unvisited ones stay lazy -- each appears on its
+            # first activation); refresh Ignore captions/menus
             # (the dialog can change the ignore options and even the
             # diff algorithm -- the Python-algorithm guard needs the
             # new value).
@@ -2914,7 +2916,8 @@ class Command:
             # starting (BEGIN_PRE above): a stray LOAD with no load in
             # flight has nothing to re-attach. The pass is the very one
             # on_start2 runs at startup -- rebuilt per-tab sessions,
-            # toolbars, title colors, scroll set -- just triggered by a
+            # layouts, the active tab's toolbar (the rest lazy), title
+            # colors, scroll set -- just triggered by a
             # mid-run session switch instead of program start.
             if self._session_loading:
                 self._session_loading = False
@@ -2989,6 +2992,80 @@ class Command:
         # wrap modes of both halves and re-sizes the inter-line gaps with
         # wrap-aware visual-row counts.
         self.refresh_compare(ed_self, show_dialog=False)
+
+    def on_tab_change(self, ed_self):
+        """The active UI-tab changed: the LAZY toolbar pass -- create
+        the compare toolbar of the tab the user just switched to.
+
+        RUNTIME subscription (events_sub.py): on_tab_change is
+        subscribed only while at least one compare tab exists, and
+        CudaText suppresses it during session load/close -- so it fires
+        exactly on real user visits. A session-restored compare tab no
+        longer gets its toolbar at startup (see _toolbar_restore_timer):
+        the toolbar appears the moment the tab is activated. No-op in
+        one dict lookup for non-compare tabs and for already-served
+        compare tabs."""
+        self._ensure_toolbar_for_visit(ed_self)
+
+    def on_focus(self, ed_self):
+        """An editor got focus: the belt-and-braces twin of
+        on_tab_change's lazy toolbar pass.
+
+        A focus event also catches the activations a tab-switch event
+        misses -- e.g. the neighbor tab CudaText auto-activates when
+        the active tab is closed (that activation is not an
+        on_tab_change), or the very first focus after a session switch.
+        RUNTIME subscription (events_sub.py): compare set -- with no
+        compare tabs open, focus changes never reach the plugin at
+        all. Cheap no-op when the visited tab already has its
+        toolbar."""
+        self._ensure_toolbar_for_visit(ed_self)
+
+    def _ensure_toolbar_for_visit(self, ed):
+        """Create the compare toolbar of the tab the user just visited
+        (on_tab_change / on_focus / the startup restore timer's
+        active-tab pass). All the lazy-creation paths funnel here.
+
+        The toolbar exists exactly for the compare tabs the user has
+        actually looked at: session-restored tabs start toolbar-less
+        (creating N idle docked forms at every startup was pure
+        overhead -- each one is ~a hundred dlg_proc/menu_proc calls
+        plus an LCL dock), and each gets its toolbar on its first
+        activation. ensure_for_session checks the show_toolbar option
+        itself; a tab that already has its toolbar returns after one
+        dict lookup. A freshly created toolbar also reflects a compare
+        that finished (or is still running) before the first visit --
+        in practice a compare implies a visited tab (Recompare needs
+        the tab active, auto-refresh needs edits), but the catch-up
+        makes the fresh toolbar honest in every case."""
+        if ed is None:
+            return
+        try:
+            tab_id = ed.get_prop(ct.PROP_TAB_ID)
+        except Exception:
+            return  # dead handle / exotic host
+        session = self._session_for(tab_id)
+        if session is None:
+            return  # not a compare tab
+        if difftb.get_for(session) is not None:
+            return  # already served -- the common case, cheap
+        try:
+            tb = difftb.ensure_for_session(self, session, ed)
+        except Exception:
+            return
+        if tb is None:
+            return  # option off / creation failed (already logged)
+        # Catch the toolbar up with a compare that already ran on this
+        # tab (status label + Prev/Next state), or is still running
+        # ('Comparing...' + the Cancel button).
+        try:
+            if session.job is not None:
+                difftb.on_compare_start(self, session)
+            elif (session.diff is not None
+                    and getattr(session.diff, 'diffmap', None)):
+                difftb.on_compare_end(self, session)
+        except Exception:
+            pass
 
     def on_scroll(self, ed_self):
         """Forward scroll events to ScrollSplittedTab for synchronized
@@ -3073,10 +3150,22 @@ class Command:
 
     def _toolbar_restore_timer(self, tag='', info=''):
         """One-shot startup timer (armed by on_start2, 300ms after the
-        sessions were rebuilt): create the toolbar of every compare tab
-        the CudaText session restored, so the toolbars are back at
-        startup exactly as they were before the restart. Tabs closed
-        again in the meantime resolve to no editor and are skipped;
+        sessions were rebuilt): restore the compare LAYOUT of every
+        session-restored compare tab, and create the compare TOOLBAR
+        of only the ACTIVE tab.
+
+        The toolbars of the other restored tabs are NOT created here
+        anymore -- each is created lazily on its first visit
+        (on_tab_change / on_focus, see _ensure_toolbar_for_visit):
+        with many restored diff tabs the old create-them-all pass made
+        N idle docked forms (N x ~a hundred dlg_proc/menu_proc calls
+        plus an LCL dock each) part of every CudaText start, although
+        the user only ever looks at one of them right away. The active
+        tab IS served here because its activation happened during the
+        session load (on_tab_change is suppressed there, and the
+        editor's on_focus fires before the plugin's sessions exist) --
+        one toolbar, the one the user is looking at. Tabs closed again
+        in the meantime resolve to no editor and are skipped;
         ensure_for_session itself checks the show_toolbar option.
 
         The same pass then re-creates each restored tab's compare
@@ -3092,11 +3181,15 @@ class Command:
         and the first compare aligns correctly (the restart bug where
         only the SECOND recompare was aligned right)."""
         for session in list(self._sessions.values()):
-            if difftb.get_for(session) is None:
-                ed = self._editor_by_tab_id(session.tab_id)
-                if ed is not None:
-                    difftb.ensure_for_session(self, session, ed)
             self._restore_compare_layout(session)
+        # The toolbar of the tab that is active RIGHT NOW (CudaText
+        # restored it focused): its activation events fired during the
+        # session load or before the sessions were rebuilt, so the lazy
+        # pass cannot have seen them -- create it here directly.
+        try:
+            self._ensure_toolbar_for_visit(ct.ed)
+        except Exception:
+            pass
         # Re-run the runtime event subscriptions now that the restored
         # tabs' overviews exist: on_scroll's condition (events_sub.py)
         # covers overview tracking even with sync_scroll off, but the
@@ -3605,9 +3698,12 @@ class Command:
         restore); rebuild the in-memory scroll set and the per-tab
         sessions (a restored tab gets a full standalone session with its
         dirty/saved caches repopulated from disk); re-apply the green
-        title color of clean compare tabs; re-create the compare toolbars
-        (on a one-shot 300ms timer -- docking needs the fully-laid-out
-        editor parents); re-subscribe to on_scroll when sync-scroll is on.
+        title color of clean compare tabs; restore the compare layouts
+        and the ACTIVE tab's toolbar (on a one-shot 300ms timer --
+        docking needs the fully-laid-out editor parents; the other
+        tabs' toolbars are created lazily on their first visit, see
+        _ensure_toolbar_for_visit); re-subscribe to on_scroll when
+        sync-scroll is on.
 
         Groups of OTHER sessions in the state file are deliberately left
         alone: their entries describe tabs that live in those session
@@ -3672,21 +3768,23 @@ class Command:
             if tab_session.saved:
                 self._apply_color_to_tab(tab_id_str, _TAB_GREEN)  # green
 
-        # Restore the compare TOOLBARS of the session-restored compare
-        # tabs (the toolbar is docked into the editor parent, which is
-        # destroyed with the tab on exit). At startup this pass runs just
+        # Restore the compare world of the session-restored compare tabs
+        # on a one-shot 300ms timer (the toolbar / overview docking needs
+        # fully-laid-out editor parents -- at startup this pass runs just
         # before the main form shows; after a mid-run session switch the
-        # parents are laid out already -- but in both cases the one-shot
-        # 300ms timer is used anyway, so the editor parents are fully
-        # laid out when the docking happens. The same timer now also
-        # re-creates each restored tab's compare LAYOUT (overview panel,
-        # hidden scrollbars, micromap -- see _restore_compare_layout):
-        # normalizing the width-affecting parts at RESTORE time means
-        # the user's first Recompare finds an already-settled layout and
-        # takes the ordinary code path -- no mid-compare width change,
-        # no stale wrap table, one compare, correct alignment. Armed for
-        # every restored compare tab regardless of the show_toolbar
-        # option (the toolbar pass checks it itself).
+        # parents are laid out already, but the timer is used anyway).
+        # The timer re-creates each restored tab's compare LAYOUT
+        # (overview panel, hidden scrollbars, micromap -- see
+        # _restore_compare_layout) and the toolbar of only the ACTIVE
+        # compare tab: normalizing the width-affecting parts at RESTORE
+        # time means the user's first Recompare finds an already-settled
+        # layout and takes the ordinary code path -- no mid-compare width
+        # change, no stale wrap table, one compare, correct alignment.
+        # The toolbars of the OTHER restored tabs are NOT created here
+        # (that create-them-all pass was the startup overhead with many
+        # diff tabs) -- each appears lazily on its first visit
+        # (on_tab_change / on_focus), and the pass checks the
+        # show_toolbar option itself.
         if self._sessions:
             callback = 'module=cuda_differ2;cmd=_toolbar_restore_timer;info=_;'
             ct.timer_proc(ct.TIMER_START_ONE, callback, 300)
@@ -3745,8 +3843,15 @@ class Command:
 
     def on_exit_pre(self, ed_self):
         """Called before CudaText is about to exit. Sets a flag so that
-        on_close (which fires next, once per closing tab) can skip
-        temp-file deletion and let compare tabs persist across restarts."""
+        on_close (which fires next, once per closing tab) takes its
+        APP-EXIT fast path: keep the persisted registrations exactly as
+        they are, destroy no GUI (the toolbar / overview forms die with
+        the main form), write no state file -- the compare tabs persist
+        across restarts without a single plugin write or GUI call in
+        the exit loop. This handler is the ONLY place exit-time work
+        happens, and it is all non-GUI: flag the exit, cancel every
+        in-flight background job (engine compares, unified diffs,
+        folder-compare scans) so nothing fires into a dying app."""
         self._app_exiting = True
         # Cancel every in-flight background engine compare: the app is
         # exiting, so no result can ever be consumed. diff_proc(DIF_CANCEL)
@@ -4719,10 +4824,12 @@ class Command:
             # gaps.
             _layout_dirty = False
 
-            # Make sure the compare TOOLBAR exists (it is normally created
-            # by set_files; recreated here for restored tabs and for the
-            # case the option was just enabled -- the same self-healing
-            # the overview gets below). All later compare-state updates
+            # Make sure the compare TOOLBAR exists (it is created by
+            # set_files for fresh tabs and lazily on a restored tab's
+            # first visit -- on_tab_change / on_focus; recreated here for
+            # the case the option was just enabled and the visit pass
+            # has not run yet -- the same self-healing the overview
+            # gets below). All later compare-state updates
             # (kick-off / finish / cancel) are no-ops when it does not.
             # (Not part of _layout_dirty: the toolbar docks to the TOP of
             # the editor parent -- it takes height, never width, and the
@@ -8683,12 +8790,16 @@ class Command:
         into another tab. If this was the last compare tab, disable
         autostart. No temp files to delete (split-tab approach).
 
-        During app exit, the state entry and autostart are preserved so
-        the compare tab can be restored after restart.
+        During APP EXIT this handler is a near-no-op: the persisted
+        registration and the autostart subscription are left exactly as
+        they are on disk (so the compare tab is restored after the
+        restart), no GUI object is destroyed, and only the runtime
+        session is dropped from memory. See the exit branch below for
+        why nothing more is needed -- or wanted.
 
         During a CudaText session switch (app_proc(PROC_LOAD_SESSION),
         the Sessions menu, session-manager plugins) the state entry is
-        preserved too: the load CLOSES the old session's tabs to replace
+        preserved: the load CLOSES the old session's tabs to replace
         them, which fires this handler for tabs the user did not close.
         The load announces itself with APPSTATE_SESSION_LOAD_BEGIN_PRE --
         the only event that fires BEFORE the closes -- so
@@ -8700,26 +8811,59 @@ class Command:
         skipped -- the editor object is genuinely being destroyed; only
         the disk record survives.
 
-        IMPORTANT: the toolbar is destroyed ONLY on a REAL tab close
-        (the non-exit branch at the bottom). During app exit CudaText
+        IMPORTANT: GUI teardown and state-file writes happen ONLY on a
+        REAL tab close (the non-exit branches). During app exit CudaText
         does not really close tabs -- it fires this event synthetically
         for every editor, from inside its own exit loop over the editor
-        frames, and writes the session file only afterwards. Calling
-        GUI APIs here (dlg_proc to undock/free the toolbar form, or
-        menu_proc on its dropdown) re-enters the widgetset message
-        processing NESTED inside this handler, i.e. exactly BETWEEN the
-        two state-file writes this method performs (the unregister
-        write at the top, the exit re-register write at the bottom).
-        That interleaving is what used to cost compare tabs their
-        persisted session entries after a restart. At exit the exit
-        branch below therefore returns BEFORE any GUI teardown -- the
-        toolbar forms are simply left to die with the app: they are
-        owned by CudaText's main form, which frees them when the app
-        terminates, and no cleanup of our own is needed there."""
+        frames, and writes the session file only afterwards. Doing
+        plugin work there is wasted at best and harmful at worst:
+
+        * GUI: the toolbar and the overview panel are forms OWNED by
+          CudaText's main form -- the app frees them when it terminates,
+          so destroying them here buys nothing, and every dlg_proc /
+          menu_proc / bitmap_proc call re-enters the widgetset message
+          processing NESTED inside the exit loop. The overview's destroy
+          also joins its worker thread (up to 250ms per tab) -- that was
+          part of the 'closing CudaText takes seconds with several big
+          compare tabs' report. The toolbar teardown already avoided
+          this; the overview now does too.
+        * Disk: the persisted entry is ALREADY correct -- the per-half
+          dirty state is maintained write-through by
+          _update_dirty_state on every real change, and the registration
+          was written when the tab was created. The old dance of
+          unregistering the entry at the top and re-registering the
+          identical dict at the bottom performed two redundant
+          state-file writes PER TAB (6 writes + the empty-file probe for
+          3 diff tabs) inside the exit loop, for zero net change. The
+          exit branch writes nothing."""
         tab_id = ed_self.get_prop(ct.PROP_TAB_ID)
         session = self._session_for(tab_id)
         if session is None:
             return  # not a compare tab
+
+        # -----------------------------------------------------------
+        # APP EXIT fast path: the app is dying. Nothing is persisted
+        # (the disk record is already correct -- see the docstring), no
+        # GUI object is torn down (the forms die with the main form),
+        # no state file is written. on_exit_pre has already cancelled
+        # every in-flight job; the defensive cancel below covers the
+        # impossible race of a job that appeared afterwards. All that
+        # is left is dropping the runtime session from memory and
+        # recomputing the event subscriptions (pure in-memory work).
+        # This also outranks the _session_loading case below: an exit
+        # during a session load keeps the exit semantics.
+        # -----------------------------------------------------------
+        if getattr(self, '_app_exiting', False):
+            job = session.job
+            session.job = None
+            if job is not None:
+                try:
+                    self._cancel_job(job)
+                except Exception:
+                    pass
+            self._sessions.pop(session.tab_id_str, None)
+            self._update_event_subscriptions()
+            return
 
         # Session switch in progress (APPSTATE_SESSION_LOAD_BEGIN_PRE
         # seen, APPSTATE_SESSION_LOAD / _FAIL not yet -- see on_state):
@@ -8727,12 +8871,11 @@ class Command:
         # closing the tab. Keep the persisted registration -- the tab
         # still exists in the session file being left and is re-attached
         # when that session comes back (_restore_session_tabs on
-        # APPSTATE_SESSION_LOAD, on_start2 on the next restart). The
-        # _app_exiting case below outranks this one: an exit during a load
-        # must keep the exit semantics. Everything after this point still
-        # runs -- the runtime teardown is correct because the editor
-        # object really is being destroyed; only the disk record survives.
-        if self._session_loading and not self._app_exiting:
+        # APPSTATE_SESSION_LOAD, on_start2 on the next restart).
+        # Everything after this point still runs -- the runtime teardown
+        # is correct because the editor object really is being
+        # destroyed; only the disk record survives.
+        if self._session_loading:
             entry = None
         else:
             # Remove the persisted registration (under the tab's OWN
@@ -8776,49 +8919,20 @@ class Command:
         # (on_state, on_exit_pre) plus the static on_tab_menu -- an
         # idle plugin costs CudaText no per-keystroke / per-caret /
         # per-scroll call until the next compare starts. Works for every
-        # close flavor (user close, session-switch close, app exit)
-        # because the bus diff is derived from the registry alone; the
-        # app-exit case is harmless (the UNSUBs only edit an in-memory
-        # list) and the exit branch below still runs afterwards.
+        # close flavor (user close, session-switch close; the app-exit
+        # flavor runs its own pass above) because the bus diff is
+        # derived from the registry alone.
         self._update_event_subscriptions()
 
-        # During app exit, keep the state entry and autostart subscription
-        # so compare tabs persist restarts and the plugin auto-loads.
-        # Re-register since we already unregistered above, preserving the
-        # per-half dirty state so on_start2 can restore the correct title
-        # color and a restart save still syncs only the halves that were
-        # dirty before exit.
-        #
-        # NO GUI calls past this point at exit (see the docstring): the
-        # entry must be re-registered before this handler returns --
-        # CudaText writes its session file right after the whole exit
-        # loop. Nothing else is needed for the halves' text: the session
-        # saver ALWAYS stores untitled tabs (both halves of a split,
-        # whatever their modified flags -- the exit 'Save tabs?' dialog
-        # has already run before on_close anyway), so the PROP_MODIFIED
-        # clearing on_close_pre did for clean tabs drops no content from
-        # the session, and the restore path brings the tabs back with
-        # Modified=True on the next start regardless.
-        if getattr(self, '_app_exiting', False):
-            if entry is not None:
-                self._register_compare_tab(
-                    session,
-                    entry.get('primary_orig_tab_id'),
-                    entry.get('secondary_orig_tab_id'),
-                    entry.get('primary_orig_name', ''),
-                    entry.get('secondary_orig_name', ''),
-                    entry.get('dirty')
-                )
-            return
-
-        # REAL tab close (not app exit): the state entry is meant to be
-        # gone now and nothing re-registers afterwards, so GUI teardown
-        # is safe here. Destroy the compare toolbar docked to this tab's
-        # editor parent: the parent control goes away with the tab, but
-        # the toolbar form itself is OWNED by CudaText's main form and
-        # would survive the tab as an invisible orphan -- it must be
-        # freed explicitly (DLG_FREE alone -- no DLG_UNDOCK, which
-        # flashes a transient floating window; see toolbar.destroy).
+        # REAL tab close (not app exit -- the exit path returned
+        # above): the state entry is meant to be gone now and nothing
+        # re-registers afterwards, so GUI teardown is safe here.
+        # Destroy the compare toolbar docked to this tab's editor
+        # parent: the parent control goes away with the tab, but the
+        # toolbar form itself is OWNED by CudaText's main form and would
+        # survive the tab as an invisible orphan -- it must be freed
+        # explicitly (DLG_FREE alone -- no DLG_UNDOCK, which flashes a
+        # transient floating window; see toolbar.destroy).
         try:
             difftb.destroy_for(session.tab_id_str)
         except Exception:

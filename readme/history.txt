@@ -1,3 +1,64 @@
+2026.11.19 (by @badrelmers)
+- change: LAZY compare-tab toolbars at startup. Objective: with many
+  session-restored diff tabs, the old restore pass created EVERY tab's
+  toolbar 300ms after on_start2 -- each one is a form plus ~16
+  controls plus a dock plus a popup menu (~a hundred dlg_proc /
+  menu_proc calls, all of it wasted on tabs the user will not look
+  at) -- which made CudaText's start visibly slower with a lot of
+  diff tabs.
+  * The toolbar now exists exactly for the compare tabs the user has
+    actually VISITED. The startup restore timer creates it only for
+    the ACTIVE compare tab (its activation happened during the
+    session load -- on_tab_change is suppressed there and the
+    editor's on_focus fires before the plugin's sessions exist, so
+    the lazy pass cannot catch it); every other restored tab gets
+    its toolbar the moment it is first activated.
+  * NEW lazy-visit events in events_sub.py's COMPARE set:
+    on_tab_change~ (fires exactly on user tab switches -- CudaText
+    suppresses it during session load/close) and on_focus~ (the
+    belt-and-braces twin: an editor getting focus also catches the
+    activations a tab-switch event misses, e.g. the neighbor tab
+    auto-activated when the active tab closes). Both funnel into
+    Command._ensure_toolbar_for_visit: one dict lookup for
+    non-compare / already-served tabs, and a freshly created toolbar
+    catches up with a compare that finished (or is still running)
+    before the first visit.
+  * The compare LAYOUT restore (overview panel, hidden scrollbars,
+    micromap) is unchanged -- still eager for every restored tab: it
+    is the width normalization that keeps the first Recompare of a
+    restored tab correctly aligned (toolbar docking is height-only
+    and can never disturb the wrap layout, so it alone is safe to
+    defer).
+  * toolbar.sync_all (config-dialog OK) no longer creates the missing
+    toolbars of EVERY session -- it syncs the existing ones and
+    creates only the focused compare tab's, keeping 'lazy' intact.
+  * refresh_compare's ensure_for_session self-healing pass is kept:
+    a compare always runs on a tab the user is looking at, so it
+    cannot resurrect the startup cost.
+- change: app-exit close is a fast no-op now. Objective: closing
+  CudaText with several big diff tabs took seconds; the plugin's own
+  on_close (which CudaText fires synthetically for every editor from
+  inside its exit loop) was doing avoidable work per tab:
+  * REMOVED the unregister-then-re-register dance of the persisted
+    registration at exit: the disk entry is already correct (the
+    per-half dirty state is written the moment it changes, and the
+    registration was written when the tab was created), so the pair
+    was two redundant state-file writes PER TAB -- 6 writes plus
+    their empty-file probes for 3 diff tabs -- for zero net change.
+  * The OVERVIEW panel is no longer destroyed at exit (the toolbar
+    already was not): both are forms owned by CudaText's main form
+    and die with the app, and the overview's destroy re-entered the
+    widgetset nested inside the exit loop AND joined its worker
+    thread (up to 250ms per tab). At exit the plugin now touches no
+    GUI and writes no state file at all -- it only drops the runtime
+    sessions from memory (on_exit_pre still cancels in-flight
+    background compares; that part is needed and stays).
+  * Real tab closes and session-switch closes are unchanged: full
+    runtime teardown (overview, toolbar, unregister) still happens
+    there, where the editor is genuinely being destroyed.
+  * readme: the Toolbar chapter and the session-tracking chapter now
+    document the lazy creation and the exit no-op.
+
 2026.11.06 (by @badrelmers)
 - change: runtime event subscriptions -- install.inf now declares ONLY
   on_tab_menu; every other event is subscribed on demand. Objective: an
