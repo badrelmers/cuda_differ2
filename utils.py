@@ -6,6 +6,8 @@ circular-dependency workarounds). `__init__.py` imports these too via
 `from .utils import split_lines_safe, ScrollSplittedTab`.
 """
 
+import json
+import os
 import re
 import typing as tp
 
@@ -292,3 +294,310 @@ class ScrollSplittedTab:
         # changed there is nothing to show at all.
         if changed:
             e.action(ct.EDACTION_UPDATE)
+
+
+# ==========================================================================
+# Shared STATE-file healer (used by the _get_state/_set_state wrappers of
+# BOTH state writers: __init__.py's compare-tab tracking and compare_dir
+# .py's folder-compare state -- the file settings/cuda_differ2_state.json
+# they share).
+#
+# WHY THIS EXISTS -- cudax_lib's set_opt has TWO write shapes for a JSON
+# file, and for dict/list values they are NOT format-compatible:
+#
+#   * CREATE branch (the file does not exist yet): the whole file is
+#     written with json.dumps(kv_dct, indent=2) -- the first key's value
+#     comes out PRETTY-PRINTED, spanning MANY lines.
+#
+#   * UPDATE / ADD branches (the file exists): strictly LINE-BASED --
+#     the code's own comment says "one key:val into one row". An UPDATE
+#     replaces ONLY the key's first line with a compact one-line value;
+#     an ADD appends one compact line before the closing brace.
+#
+# So the SECOND write to a freshly created state file replaces the first
+# line of the pretty multi-line value and leaves the remaining lines of
+# the old value in the file as an orphaned tail -> invalid JSON, and
+# every later read of the file fails (CudaText's tolerant reader logs
+# "error on loading json" into cudax.log). On a fresh plugin install the
+# first write is the very first compare-tab registration, and the second
+# write can be any later state change: the dirty-flag update of the
+# first keystroke typed into a diff half, the registration of a second
+# diff tab, the unregister of a closed tab, a folder-compare state
+# write... (Repro: fresh install -> compare two files -> type in one
+# half, don't save -> restart CudaText -> the json error.)
+#
+# The plugin cannot fix cudax_lib (it ships with the app), so every
+# read/write of the shared state file goes through this healer first.
+# It guarantees the file is in the ONE shape every cudax_lib write
+# expects -- one key per line, compact value, parseable -- and repairs
+# files the bug above (or older plugin releases, or a hand edit) left
+# in a bad shape:
+#
+#   * missing file    -> pre-created as '{}' (so cudax_lib's pretty
+#                        CREATE branch can never run on it again; every
+#                        later write goes through the line-based ADD /
+#                        UPDATE branches, which keep each key on ONE
+#                        compact line forever);
+#   * blank file      -> healed to '{}' (the 28th-release heal, now
+#                        shared by both writers);
+#   * unparseable file -> the complete one-line '"differ2.*": <value>'
+#                        pairs are salvaged (they are exactly the lines
+#                        cudax_lib's line-based writes leave behind, so
+#                        they carry the authoritative last-written
+#                        values), the original is backed up beside it
+#                        as <name>.corrupt.bak and the file is rebuilt
+#                        from them;
+#   * parseable file whose 'differ2.*' values span multiple lines
+#     (legacy whole-file writers, hand edits) -> each such value is
+#     compacted onto its key's line in place; every other line --
+#     including hand-made // comments -- is preserved byte-for-byte.
+#
+# heal_state_file() returns a short human-readable note when the file
+# was changed ('' when it was already healthy) so the callers can log
+# it; it never raises (a settings dir the user cannot write to must
+# not break the plugin) and never touches keys outside the plugin's
+# own 'differ2.*' namespace.
+# ==========================================================================
+
+# One '"differ2.<name>": <rest>' line. Mirrors the LINE ANCHORING of
+# cudax_lib's own update regex ('^\s*,?\s*"<key>"\s*:(.+)'): a key line
+# this pattern cannot find is a key line cudax_lib's UPDATE branch
+# cannot find either -- that write then takes its harmless append-only
+# ADD branch instead, so the shapes this regex skips are exactly the
+# shapes that are safe to skip.
+_KEY_LINE_RE = re.compile(
+    r'^(\s*),?\s*"(?P<key>differ2\.[^"]+)"\s*:\s*(?P<rest>.*)$')
+
+
+def _strip_json_comment(match):
+    """re.sub callback: cut one line at the first '//' that is outside
+    a JSON string (same string-aware scan cudax_lib's _json_loads
+    uses, so the healer judges parseability exactly like the reader
+    that will consume the file)."""
+    line = match.group(0)
+    pos = 0
+    in_str = False
+    while pos < len(line):
+        ch = line[pos]
+        if ch == '\\':
+            pos += 2
+        else:
+            if ch == '"':
+                in_str = not in_str
+            elif line[pos:pos + 2] == '//' and not in_str:
+                return line[:pos]
+            pos += 1
+    return line
+
+
+def tolerant_json_loads(text):
+    """json.loads with cudax_lib's tolerance: '//' comments stripped and
+    stray commas around '{', '}', '[', ']' removed. SILENT -- returns
+    None on failure (cudax_lib's own _json_loads logs an error line and
+    writes it to cudax.log, which the healer's probe must not spam:
+    probing happens before every state read/write)."""
+    s = re.sub(r'^.*//.*$', _strip_json_comment, text, flags=re.MULTILINE)
+    s = re.sub(r'{\s*,', '{', s)
+    s = re.sub(r',\s*}', '}', s)
+    s = re.sub(r'\[\s*,', '[', s)
+    s = re.sub(r',\s*\]', ']', s)
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+
+def _scan_value_end(lines, li, ci):
+    """lines[li][ci] is the opening '{' or '[' of a JSON value (outside
+    any string). Return (end_li, end_ci) pointing just past the matching
+    close, or (None, None) when the value never closes. String- and
+    '//' comment-aware: pretty values may carry hand-made comments, and
+    a brace inside a comment or a string literal would break a naive
+    depth counter."""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(li, len(lines)):
+        line = lines[i]
+        j = ci if i == li else 0
+        while j < len(line):
+            ch = line[j]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == '\\':
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            elif ch == '"':
+                in_str = True
+            elif ch == '/' and line[j:j + 2] == '//':
+                break               # comment: rest of the line is not JSON
+            elif ch in '{[':
+                depth += 1
+            elif ch in '}]':
+                depth -= 1
+                if depth == 0:
+                    return i, j + 1
+            j += 1
+    return None, None
+
+
+def heal_state_file(path):
+    """Make the shared plugin STATE file safe for cudax_lib's
+    line-based set_opt BEFORE any read or write reaches it (see the
+    block comment above for the full rationale and the four heal
+    cases). 'path' is the absolute path of the file. Returns a short
+    note when the file was changed, '' when it was already healthy;
+    never raises."""
+    try:
+        with open(path, 'r', encoding='utf8') as f:
+            text = f.read()
+    except FileNotFoundError:
+        # Missing: pre-create it as '{}' OURSELVES. cudax_lib's set_opt
+        # would create it pretty-printed (indent=2), which is the first
+        # half of the corruption; an existing (even empty) file makes
+        # every later write take the line-based ADD / UPDATE branches,
+        # which are the safe shape.
+        try:
+            with open(path, 'w', encoding='utf8') as f:
+                f.write('{}\n')
+            return 'state file was missing: created empty'
+        except OSError:
+            return ''
+    except (OSError, UnicodeDecodeError):
+        return ''                   # unreadable for reasons we can't fix
+
+    if not text.strip():
+        # Blank (a crash between a writer's open('w') and its write --
+        # the 28th-release case, kept): cudax_lib's ADD branch dies on
+        # an empty body, so heal it to '{}'.
+        try:
+            with open(path, 'w', encoding='utf8') as f:
+                f.write('{}\n')
+            return 'blank state file healed to {}'
+        except OSError:
+            return ''
+
+    if tolerant_json_loads(text) is None:
+        return _salvage_state_file(path, text)
+    return _compact_multiline_values(path, text)
+
+
+def _compact_multiline_values(path, text):
+    """The file parses, but a 'differ2.*' value may still span several
+    lines (a legacy whole-file writer or a hand edit): cudax_lib's next
+    UPDATE of that key would replace only its first line and orphan the
+    rest -- the very corruption above. Fold every such value onto its
+    key's line; every other line, including hand-made // comments, is
+    preserved byte-for-byte."""
+    lines = text.splitlines(True)   # keepends: untouched lines pass through
+    out = []
+    folded = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        core = line.rstrip('\r\n')
+        ending = line[len(core):]
+        m = _KEY_LINE_RE.match(core)
+        fold_col = None
+        if m:
+            # Is this key's value COMPLETE on this line? (A scalar, or a
+            # balanced {..}/[..] pair -- the one-line shape cudax_lib
+            # updates safely.) If not, but it OPENS a {/[, the value
+            # continues on the following lines -- fold it.
+            rest = m.group('rest').strip()
+            if rest.endswith(','):
+                rest = rest[:-1].rstrip()
+            if rest[:1] in ('{', '[') and tolerant_json_loads(rest) is None:
+                fold_col = core.find(rest[0], m.start('rest'))
+        if fold_col is not None:
+            # Multi-line differ2.* value: find its end (from the opener
+            # column), parse it, write the compact form on ONE line.
+            end_i, end_c = _scan_value_end(lines, i, fold_col)
+            ok = end_i is not None
+            if ok:
+                span = (lines[i][fold_col:]
+                        + ''.join(lines[i + 1:end_i])
+                        + lines[end_i][:end_c])
+                val = tolerant_json_loads(span)
+                ok = val is not None
+            if not ok:
+                # Cannot isolate the value safely: leave the file alone
+                # (a half-rewrite could do more harm than the hazard).
+                return ''
+            new_line = '%s"%s": %s' % (m.group(1), m.group('key'),
+                                       json.dumps(val))
+            after = lines[end_i][end_c:]
+            if after.strip().startswith(','):
+                # More pairs follow the close on the same line: glue
+                # them after the compact value (their comma is 'after').
+                out.append(new_line + after)
+            else:
+                # Clean line end (or a trailing // comment): end the
+                # folded pair with a comma, keep any trailing text.
+                out.append(new_line + ',' + (after or '\n'))
+            folded += 1
+            i = end_i + 1
+            continue
+        out.append(line)
+        i += 1
+    if not folded:
+        return ''
+    new_text = ''.join(out)
+    if tolerant_json_loads(new_text) is None:
+        return ''                   # safety net; must not happen
+    try:
+        with open(path, 'w', encoding='utf8') as f:
+            f.write(new_text)
+    except OSError:
+        return ''
+    return ('state file normalized: %d multi-line value(s) folded '
+            'onto their key lines' % folded)
+
+
+def _salvage_state_file(path, text):
+    """The file does not parse (the orphaned-tail corruption above, or a
+    hand-mangled file). Recover what is recoverable -- every COMPLETE
+    one-line '\"differ2.*\": <value>' pair (exactly the lines cudax_lib's
+    line-based writes leave behind, so they carry the authoritative
+    last-written values; the multi-line remainders of an orphaned tail
+    never form one) -- back the original up as <name>.corrupt.bak and
+    rebuild the file from the survivors."""
+    pairs = {}                      # key -> value text, last write wins
+    order = []                      # first-seen key order
+    for line in text.splitlines():
+        m = _KEY_LINE_RE.match(line.rstrip('\r\n'))
+        if not m:
+            continue
+        val_text = m.group('rest').strip()
+        if val_text.endswith(','):
+            val_text = val_text[:-1].rstrip()
+        if tolerant_json_loads(val_text) is None:
+            continue                # not a complete one-line value
+        if m.group('key') not in pairs:
+            order.append(m.group('key'))
+        pairs[m.group('key')] = val_text
+    bak = path + '.corrupt.bak'
+    try:
+        with open(bak, 'w', encoding='utf8') as f:
+            f.write(text)
+    except OSError:
+        return ''                   # cannot back up: do not risk a rewrite
+    try:
+        with open(path, 'w', encoding='utf8') as f:
+            if pairs:
+                f.write('{\n' + ''.join(
+                    '  "%s": %s,\n' % (k, pairs[k]) for k in order) + '}\n')
+                note = ('state file was corrupt: repaired from the last '
+                        'written %d key(s), original backed up as %s'
+                        % (len(order), os.path.basename(bak)))
+            else:
+                f.write('{}\n')
+                note = ('state file was corrupt and unrecoverable: '
+                        'reset to {}, original backed up as %s'
+                        % os.path.basename(bak))
+    except OSError:
+        return ''
+    return note
+

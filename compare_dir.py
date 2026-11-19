@@ -519,6 +519,8 @@ from cudax_lib import get_translation
 from .profiling import (Profiler, enable_profiling, profiling_report,
                         reset_profiling, start_profiling, stop_profiling,
                         cancel_profiling)
+from .utils import heal_state_file
+from cudax_lib import get_translation
 
 _ = get_translation(__file__)  # I18N
 
@@ -835,7 +837,14 @@ def _set_opt(key, val):
 def _get_state(key, def_val):
     """Read a 'differ2.dirs.*' state key from the plugin's STATE file
     (settings/cuda_differ2_state.json) -- never from the settings
-    file (see STATE_JSON above)."""
+    file (see STATE_JSON above). The file is HEALED before the read
+    (utils.heal_state_file -- the same shared healer __init__.py's
+    wrappers use: missing/blank/corrupt files and legacy multi-line
+    values are repaired before cudax_lib ever sees them)."""
+    note = heal_state_file(os.path.join(
+        ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON))
+    if note:
+        print('Differ 2: ' + note)
     return ctx.get_opt('differ2.' + key, def_val, user_json=STATE_JSON)
 
 
@@ -843,28 +852,25 @@ def _set_state(key, val):
     """Write (or, with val=None, delete) a 'differ2.dirs.*' state key
     in settings/cuda_differ2_state.json.
 
-    Empty-file heal: a crash between any writer's open('w') and its
-    write can leave the state file 0 bytes / whitespace-only, and
-    cudax_lib's set_opt append branch then dies on body.rstrip()[:-1]
-    (IndexError on an empty string) -- every later state write would
-    fail. Such a file carries nothing to lose, so it is healed to
-    '{}' before set_opt runs (28th release).
+    The file is HEALED before every write (utils.heal_state_file -- the
+    same shared healer __init__.py's wrappers use): pre-created when
+    missing (cudax_lib's set_opt would otherwise CREATE the file
+    pretty-printed with indent=2, and the next line-based update of
+    that key would replace only the value's first line, orphaning the
+    rest -- the fresh-install 'error on loading json' bug), blank-
+    healed, salvaged from a corrupt state, and compacted when a legacy
+    multi-line value would trip the same orphaning.
 
     The file itself is SHARED with __init__.py's compare-tab tracking
     (its 'differ2.sessions' key), and since the 29th release EVERY
     writer on it uses this very line-based set_opt: a write touches
-    only this key's own line and never drops another writer's keys
+    only its own key's own line and never drops another writer's keys
     (or the user's hand-made // comments) -- the whole-file json.dump
     writer whose rewrites could delete this side's keys is gone."""
-    try:
-        path = os.path.join(ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON)
-        with open(path, 'r', encoding='utf8') as f:
-            if f.read().strip():
-                raise ValueError('not empty')
-        with open(path, 'w', encoding='utf8') as f:
-            f.write('{}')
-    except (OSError, UnicodeDecodeError, ValueError):
-        pass
+    note = heal_state_file(os.path.join(
+        ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON))
+    if note:
+        print('Differ 2: ' + note)
     return ctx.set_opt('differ2.' + key, val, user_json=STATE_JSON)
 
 

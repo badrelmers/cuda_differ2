@@ -1,4 +1,45 @@
 2026.11.19 (by @badrelmers)
+- fix: 'ERROR: error on loading json' (cudax.log: _json_loads FAIL on
+  cuda_differ2_state.json) after a restart, on a FRESH plugin install
+  that did one compare and then anything else -- typed into a diff
+  half without saving, opened a second compare, closed the diff tab.
+  Root cause was NOT plugin logic but a shape mismatch inside
+  cudax_lib's set_opt, which the plugin must now defend against:
+  * cudax_lib's set_opt CREATES a missing JSON file pretty-printed
+    (json.dumps(kv_dct, indent=2)) -- the first key's value spans
+    MANY lines; but its UPDATE branch is line-based ("one key:val
+    into one row") and replaces ONLY the key's first line. The second
+    write to a freshly created state file therefore leaves the
+    remaining lines of the pretty value in the file as an orphaned
+    tail: invalid JSON, every later read fails. (The app-exit change
+    below in this same release removed the exit-time
+    unregister/re-register writes, which is why the plain 'compare +
+    restart' flavor of this stopped happening -- the dirty-half write
+    of the first keystroke, the second tab's register and the
+    tab-close unregister trip the very same mismatch.)
+  * NEW shared healer utils.heal_state_file(), called by BOTH state
+    writers' wrappers (__init__.py's _get_state/_set_state and
+    compare_dir.py's) before every read and write: a MISSING state
+    file is pre-created as '{}' (so cudax_lib's pretty CREATE branch
+    can never run on it again -- every write takes the line-based
+    ADD/UPDATE branches, which keep each key on ONE compact line
+    forever); a BLANK file is healed to '{}' (the 28th-release heal,
+    now shared); an UNPARSEABLE file (already corrupted, e.g. by this
+    very bug or a crash) is SALVAGED -- the complete one-line
+    'differ2.*' pairs carry the authoritative last-written values and
+    rebuild the file, the original is backed up beside it as
+    cuda_differ2_state.json.corrupt.bak; a parseable file with
+    MULTI-LINE 'differ2.*' values (legacy whole-file writers, hand
+    edits) gets each such value folded onto its key's line, with
+    every other line -- hand-made // comments included -- preserved
+    byte-for-byte. One-time repairs log one 'Differ 2: ...' line;
+    healthy files cost one small read and print nothing.
+  * The healer never raises (an unwritable settings dir must not
+    break the plugin), never touches keys outside the plugin's own
+    'differ2.*' namespace, and mirrors the line anchoring of
+    cudax_lib's own update regex: a key line the healer cannot see is
+    a key line cudax_lib's UPDATE branch cannot see either, so that
+    write takes its harmless append-only ADD branch instead.
 - change: LAZY compare-tab toolbars at startup. Objective: with many
   session-restored diff tabs, the old restore pass created EVERY tab's
   toolbar 300ms after on_start2 -- each one is a form plus ~16

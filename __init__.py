@@ -36,7 +36,7 @@ from . import compare_dir as dfd
 from .profiling import (Profiler, enable_profiling, profiling_report,
                         reset_profiling, start_profiling, stop_profiling,
                         cancel_profiling)
-from .utils import split_lines_safe, ScrollSplittedTab
+from .utils import split_lines_safe, ScrollSplittedTab, heal_state_file
 from .events_sub import EventSubscriptions, build_events
 from .unidiff import (UnidiffRunner, report_status,
                       unified_diff_opcodes)
@@ -1477,9 +1477,20 @@ def _get_state(key, def_val):
     reader, so // comments and the trailing comma set_opt's line-based
     update/append legitimately leaves are always legal there.
 
+    The file is HEALED before the read (utils.heal_state_file): a
+    missing/blank/corrupt state file -- or one whose values still span
+    multiple lines -- is repaired before cudax_lib ever sees it, so
+    the read itself cannot be the first victim and the file is safe
+    for the NEXT write too (see the healer's block comment for the
+    cudax_lib create-vs-update shape mismatch this guards against).
+
     NB: the returned value may be the very dict parsed into cudax_lib's
     per-file option cache -- callers that keep and mutate it must
     deep-copy first (Command._load_sessions does)."""
+    note = heal_state_file(os.path.join(
+        ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON))
+    if note:
+        msg(note)
     return ctx.get_opt('differ2.' + key, def_val, user_json=STATE_JSON)
 
 
@@ -1490,22 +1501,19 @@ def _set_state(key, val):
     key in the shared state file -- and the user's hand-made //
     comments -- survives every write.
 
-    Empty-file heal: a crash between any writer's open('w') and its
-    write can leave the state file 0 bytes / whitespace-only, and
-    cudax_lib's set_opt append branch then dies on body.rstrip()[:-1]
-    (IndexError on an empty string) -- every later state write would
-    fail. Such a file carries nothing to lose, so it is healed to '{}'
-    before set_opt runs (28th release, kept in the 29th's single-writer
-    regime)."""
-    try:
-        path = os.path.join(ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON)
-        with open(path, 'r', encoding='utf8') as f:
-            if f.read().strip():
-                raise ValueError('not empty')
-        with open(path, 'w', encoding='utf8') as f:
-            f.write('{}')
-    except (OSError, UnicodeDecodeError, ValueError):
-        pass
+    The file is HEALED before every write (utils.heal_state_file):
+    pre-created when missing (cudax_lib's set_opt would otherwise
+    CREATE it pretty-printed with indent=2, and the NEXT line-based
+    update of that key would replace only the value's first line,
+    orphaning the rest -- the fresh-install 'error on loading json'
+    after a dirty diff half), blank-healed, salvaged from a corrupt
+    state and compacted when a legacy multi-line value would trip the
+    same orphaning. The old inline blank-heal of the 28th release is
+    part of the shared healer now."""
+    note = heal_state_file(os.path.join(
+        ct.app_path(ct.APP_DIR_SETTINGS), STATE_JSON))
+    if note:
+        msg(note)
     return ctx.set_opt('differ2.' + key, val, user_json=STATE_JSON)
 
 
