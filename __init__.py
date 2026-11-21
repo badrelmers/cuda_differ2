@@ -1293,17 +1293,69 @@ OPTS_META = [
      },
     {'opt': 'differ2.toolbar.show_btn_text',
      'cmt': _('Show button texts in the toolbar\n'
-              'When enabled, the toolbar buttons show their icon plus a '
-              'text caption ("\u21bb Recompare", "\u2194 Resize", "\u2191 Prev", '
-              '"\u2193 Next", "\u2190 Copy", "\u2192 Copy", "\u2261 Ignore '
-              '2/5 \u25be", "\u2699 Config"); when disabled, only the '
-              'UTF-8 icons are shown (the Ignore button keeps its '
+              'When enabled, the toolbar buttons show their picture '
+              'icon plus a text caption ("Recompare", "Prev", "Next", '
+              '"Copy", "Ignore 2/5", "Preset", "Swap", "Resize", '
+              '"View", "Config"); when disabled, only the picture '
+              'icons are shown (the Ignore button keeps its '
               'enabled-options counter).\n'
+              'The icons are PNG files in the plugin\'s icons/toolbar/ '
+              'folder, theme-matched (near-white glyphs on dark '
+              'themes, near-black on light) and DPI-sized; the three '
+              'dropdown buttons (Ignore / Preset / View) carry a small '
+              'separate caret button to the right of the text. Without '
+              'the icon files (or on an old build without the '
+              'imagelist API) the buttons fall back to UTF-8 glyph '
+              'captions.\n'
               'Only used when the toolbar itself is enabled '
               '(differ2.toolbar.show_toolbar).\n'
               'Default: on.'),
      'def': True,
      'frm': 'bool',
+     'chp': 'toolbar',
+     },
+    {'opt': 'differ2.toolbar.icon_theme',
+     'cmt': _('Icon set for the toolbar buttons\n'
+              'Which of the two picture-icon sets the toolbar uses.\n'
+              '- Auto-detect -- read the live toolbar background '
+              '(the UI theme\'s editor background) and take the set '
+              'tuned for it: near-white glyphs on dark backgrounds, '
+              'near-black on light ones. Re-detected on every UI '
+              'theme switch. Recommended.\n'
+              '- Dark -- always the set for DARK themes (near-white '
+              'glyphs).\n'
+              '- Light -- always the set for LIGHT themes (near-black '
+              'glyphs).\n'
+              'Only used when the toolbar itself is enabled '
+              '(differ2.toolbar.show_toolbar) and the icon files are '
+              'installed.\n'
+              'Default: Auto-detect.'),
+     'def': 'auto',
+     'frm': 'str2s',
+     'dct': [('auto',   _('Auto-detect (recommended)')),
+             ('dark',   _('Dark (for dark themes, white glyphs)')),
+             ('light',  _('Light (for light themes, black glyphs)'))],
+     'chp': 'toolbar',
+     },
+    {'opt': 'differ2.toolbar.icon_size',
+     'cmt': _('Icon size in the toolbar\n'
+              'Pixel size of the toolbar\'s picture icons.\n'
+              '- Auto (DPI) -- follow the OS scaling: 16px at 100% '
+              'up to 32px at 200%. Recommended.\n'
+              '- A fixed size (16 / 20 / 24 / 28 / 32) -- always that '
+              'size, ignoring the OS DPI. Use it when the DPI-scaled '
+              'icons feel too small or too big for your screen / '
+              'font.\n'
+              'Only used when the toolbar itself is enabled '
+              '(differ2.toolbar.show_toolbar) and the icon files are '
+              'installed.\n'
+              'Default: Auto (DPI).'),
+     'def': 'auto',
+     'frm': 'str2s',
+     'dct': [('auto', _('Auto (follow the OS DPI)')),
+             ('16',  _('16 px')), ('20', _('20 px')),
+             ('24',  _('24 px')), ('28', _('28 px')),
+             ('32',  _('32 px'))],
      'chp': 'toolbar',
      },
     # --- chapter "dirs": the folder-compare window (compare_dir.py) ----
@@ -8056,6 +8108,10 @@ class Command:
                 get_opt('toolbar.show_toolbar', True),
             'show_btn_text':
                 get_opt('toolbar.show_btn_text', True),
+            'icon_theme':
+                get_opt('toolbar.icon_theme', 'auto'),
+            'icon_size':
+                get_opt('toolbar.icon_size', 'auto'),
         }
 
         return config

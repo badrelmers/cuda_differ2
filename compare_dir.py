@@ -498,7 +498,6 @@ is gone since the scan falls back to the plain opener, which reports
 it in its own error box.
 """
 
-import base64
 import fnmatch
 import os
 import shutil
@@ -520,7 +519,6 @@ from .profiling import (Profiler, enable_profiling, profiling_report,
                         reset_profiling, start_profiling, stop_profiling,
                         cancel_profiling)
 from .utils import heal_state_file
-from cudax_lib import get_translation
 
 _ = get_translation(__file__)  # I18N
 
@@ -594,7 +592,6 @@ _SCAN_MODES = (SCAN_MODE_POOL, SCAN_MODE_SERIAL, SCAN_MODE_MAIN)
 
 HISTORY_MAX = 12               # remembered folder paths per side
 POLL_MS = 200                  # worker -> UI poll period while scanning
-ICON_CACHE_VER = '1'           # bump to force-renew the icon cache dir
 
 # Owner-drawn list metrics (the results list is a listbox_ex in
 # LISTBOX_SET_DRAWN mode -- see the module docstring "Row coloring").
@@ -1551,73 +1548,12 @@ def _reveal_in_file_manager(path):
 # Icons
 # ----------------------------------------------------------------------
 
-# 16x16 RGBA PNGs, drawn offline by scripts/gen_icons.py (pure-Python
-# rasterizer, 2x supersampling) and embedded here as base64 so the
-# plugin ships as plain .py files with no binary attachments. On first
-# use they are written to settings/cuda_differ2_icons/ (a cache -- the
-# imagelist API loads icons from files only) and attached to each
-# window's own imagelist (created with the form as its owner, so it is
-# freed together with the form).
-_ICONS_PNG = {
-    'same': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAxElEQVR42mNgoAVQbjOzB+'
-        'J6KN4PYxOrGaThv+F8ZzC2WOMJprUm2fwHiYMMx6sZpNB+ZwBWDDIMpyGENIPw/DvLsRsC'
-        '9TNBzSAAokFeAlmIbEA9SBCX5vxT1f9hAMQGiYEsxGoASAFMES7N2AzYD/IbSAJZMbLm82'
-        '8vo7gKGiv2WF2ArAmbZqxeQI4BfDYjRyd6NP6HeQMW6tg0Izm/HlvyRTEEj+b9+PLAf2xR'
-        'CjIYr2Y0Q/ZDUxtyHvhPdIZCNxCfPACrkX4MLc4gygAAAABJRU5ErkJggg=='
-    ),
-    # 253 bytes
-    'diff': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAA0klEQVR42rWTMQ7CMAxFex'
-        'dYYWRgydSBkcswIeUyDD0Ba7buiIEjcAUQQoYf5UvGdaIuWLKapv4v+XXSdf+I82IZvhlL'
-        'Jo7niiGQ23aT896H/BzXK8E84E0xCh/7nZuAVSEUP48HeQ2niZjzLqR4zoUoQryvlx8xA+'
-        '+whAU1IGKSAogJ0WKMWYMFqwAN8cQeIMGb9czQdpilK8HdgRV7kIkFts/zbCHshG1j/sAu'
-        'WM+EqO1H7/iK/RcV76l1B8R2hNtuig0kldOm74DMvlAW2Pr+Aaw4quznoqrLAAAAAElFTk'
-        'SuQmCC'
-    ),
-    # 267 bytes
-    'lonly': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAP0lEQVR42mNgGAV4wZXlOv'
-        '+BuJ5SA0B4PxDbU2LAf4KuwaIYH7an1ADivIRDcz25YbCfkkAkKwbsKUoDQwcAAJsxgJNU'
-        'o3dQAAAAAElFTkSuQmCC'
-    ),
-    # 120 bytes
-    'ronly': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAPklEQVR42mNgGAV4wZXlOv'
-        'ZAvB+I/5OjuR6kEYbJspVkA7BpxIUJOplkA/A5n+RAhBpEvgHYwoTitDCMkzsAQ2SGH/3b'
-        'Xb4AAAAASUVORK5CYII='
-    ),
-    # 119 bytes
-    'folder': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAPUlEQVR42mNgGB5g/Y6D9U'
-        'D8Hw3X08+AwqqWeiD+TyJGWNAzdX49EP8nEY8aQFUDwhOy6oH4P4m4fpjkIwAoQEJU6k6B'
-        'yAAAAABJRU5ErkJggg=='
-    ),
-    # 118 bytes
-    'err': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAjklEQVR42mNgGPQgPCGrnh'
-        'LN+4H4PxDbk6PZHqQ5JbccZMB+smwHaa5rn/ifZFfAbAeBo6fOk+4KkObCqha4AT1T58Nc'
-        'UU9UqINsBGlCNgDmFaKcDlIM0gTSvGL9djAbhAl6BRZwMA3ILkB2BdYAhdkOU4zNBSAMCh'
-        'usroAFHLJiXBgjQEEcqCBJeHBkNgAJNeIoS6cmqAAAAABJRU5ErkJggg=='
-    ),
-    # 199 bytes
-    # Checkbox glyphs for the themed checks (button_ex + imagelist,
-    # cuda_prefs' own pattern -- see _add_check): semi-transparent
-    # gray, so the SAME glyph reads on light and dark themes.
-    'chk_on': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAeUlEQVR42mNgGDQgMTFRE4'
-        'iDicG4DAju7OzcumbNmiP4MFDdMpwGgBQ8JgDINiA7O/suCJNlAEijk5PTHaIM2L1798PJ'
-        'kyffh2kG8WGaifICSDNIA4iGaQZhEJvoMIBpQtdMtAHINiN7h6RYQA8LogwASRKDGYYXAA'
-        'DbMC4B9VuU7gAAAABJRU5ErkJggg=='
-    ),
-    # 178 bytes
-    'chk_off': (
-        'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAOUlEQVR42mNgGDQgMTFRE4'
-        'iDicG4DAju7OzcumbNmiP4MFDdMpwGgBQ8JgBGDRj+BoAkicEMwwsAABiEUk9D2QrZAAAA'
-        'AElFTkSuQmCC'
-    ),
-    # 114 bytes
-}
+# The row-status icons ship as plain PNG files in the plugin's own
+# icons/compare_dir/ folder (same, diff, lonly, ronly, folder, err,
+# chk_on, chk_off -- 16x16 RGBA). The earlier releases embedded them
+# here as base64 and wrote a cache copy to settings/ on first use;
+# they are ordinary files now, loaded straight by the imagelist API
+# (which reads icons from files only) -- see _icon_paths.
 
 
 # ----------------------------------------------------------------------
@@ -3002,10 +2938,10 @@ class _PickerDialog:
 # The compare window
 # ----------------------------------------------------------------------
 
-# Which icon (by _ICONS_PNG name) each FILE row status uses. Folder
-# rows always paint the folder icon (see the painter) -- a one-sided
-# folder must not swap it for a file icon: its color and Status
-# caption carry the sidedness, the icon carries the KIND.
+# Which icon (by icons/compare_dir file name) each FILE row status
+# uses. Folder rows always paint the folder icon (see the painter) --
+# a one-sided folder must not swap it for a file icon: its color and
+# Status caption carry the sidedness, the icon carries the KIND.
 _ICON_OF = {
     ST_SAME:      'same',
     ST_DIFF:      'diff',
@@ -3417,8 +3353,11 @@ class DirCompareForm:
             self.h_imglist = ct.imagelist_proc(0, ct.IMAGELIST_CREATE,
                                                value=self.h)
             for name in ('same', 'diff', 'lonly', 'ronly', 'folder', 'err'):
+                p = paths.get(name)
+                if not p:
+                    continue  # missing file -> no icon on that row
                 idx = ct.imagelist_proc(self.h_imglist, ct.IMAGELIST_ADD,
-                                        value=paths[name])
+                                        value=p)
                 self._icon_idx[name] = idx if idx is not None else -1
         except Exception:
             pass  # icons are decoration; the Status column carries the info
@@ -5605,36 +5544,19 @@ class DirCompareForm:
 # ----------------------------------------------------------------------
 
 def _icon_paths():
-    """Write the embedded 16x16 PNGs into settings/cuda_differ2_icons/
-    (once -- the directory is a cache, versioned by ICON_CACHE_VER so a
-    future icon update renews it) and return {name: path}. The
-    imagelist API loads icons from files only, hence the cache."""
-    d = os.path.join(ct.app_path(ct.APP_DIR_SETTINGS),
-                     'cuda_differ2_icons')
-    ver_file = os.path.join(d, '.v' + ICON_CACHE_VER)
-    fresh = os.path.exists(ver_file)
+    """{name: path} of the row-status PNGs in the plugin's own
+    icons/compare_dir/ folder (the imagelist API loads icons from
+    files only). Only the files that exist are returned -- a missing
+    icon just means no icon on that row (IMAGELIST_ADD never runs for
+    it), never an error for the user."""
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     'icons', 'compare_dir')
     out = {}
-    try:
-        if not fresh:
-            os.makedirs(d, exist_ok=True)
-        for name, b64 in _ICONS_PNG.items():
-            p = os.path.join(d, name + '.png')
-            if not fresh or not os.path.exists(p) or \
-                    os.path.getsize(p) == 0:
-                with open(p, 'wb') as f:
-                    f.write(base64.b64decode(b64))
+    for name in ('same', 'diff', 'lonly', 'ronly', 'folder', 'err',
+                 'chk_on', 'chk_off'):
+        p = os.path.join(d, name + '.png')
+        if os.path.isfile(p) and os.path.getsize(p) > 0:
             out[name] = p
-        if not fresh:
-            with open(ver_file, 'w') as f:
-                f.write(ICON_CACHE_VER)
-    except OSError:
-        # Read-only settings dir: keep whatever paths exist; a missing
-        # icon just means no icon on that row (IMAGELIST_ADD fails ->
-        # index -1), never an error for the user.
-        for name in _ICONS_PNG:
-            p = os.path.join(d, name + '.png')
-            if os.path.exists(p):
-                out.setdefault(name, p)
     return out
 
 

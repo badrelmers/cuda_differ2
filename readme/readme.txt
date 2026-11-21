@@ -193,7 +193,7 @@ Swap compared editors
     undo history does not survive the swap (undo entries belong to
     the text that just moved to the other side). Not available while
     a comparison is running in that tab -- stop it or let it finish
-    first. Also on the compare-tab toolbar (the ⇋ Swap button).
+    first. Also on the compare-tab toolbar (the Swap button).
 
 Select current difference
     Selects the difference block under the cursor.
@@ -842,14 +842,34 @@ Every compare tab gets a toolbar docked to the top of the compare view
 the editor text background color of the current UI theme, so it blends
 into the compare view):
 
-    [↻ Recompare or × Cancel] | [↑ Prev][↓ Next] | [→ Copy][← Copy] |
-    [≡ Ignore 2/5 ▾] [★ Preset ▾] | [⇋ Swap] [↔ Resize] [▦ View ▾] [⚙ Config]
+    [(pic) Recompare or (pic) Cancel] | [(pic) Prev][(pic) Next] |
+    [(pic) Copy][(pic) Copy] | [(pic) Ignore 2/5][(▾)] [(pic) Preset][(▾)] |
+    [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Config]
     ...status
 
-- ↻ Recompare -- re-runs the compare (same as F5 / the menu's
-  Recompare). While a compare runs, the button becomes × Cancel and
+Every "(pic)" is a PNG picture icon from the plugin's icons/toolbar/
+tree -- no font glyphs anywhere in the captions: the old UTF-8 symbols
+rendered as tofu boxes on UI fonts without those code points. Two
+sets are tuned to the toolbar background (near-white glyphs for dark
+themes, near-black for light and light-grey ones) and re-picked
+automatically on every UI theme switch; the pixel size follows the OS
+DPI (16px at 100% ... 32px at 200%). Both choices can also be pinned
+by hand with the options differ2.toolbar.icon_theme (auto / dark /
+light) and differ2.toolbar.icon_size (auto / 16 / 20 / 24 / 28 / 32).
+The (▾) marks are the dropdown carets: small separate picture buttons
+chained to the right of Ignore / Preset / View, AFTER the text -- the
+menu buttons' own icons are full-size glyphs exactly like every other
+button (a unified look), and the caret is a clearly visible triangle
+of its own. Clicking a menu button or its caret opens the same
+dropdown. When the icon files are missing or the build's imagelist
+API fails, the buttons fall back to the old UTF-8 glyph captions
+(with the caret as a trailing glyph), so the toolbar never loses its
+faces.
+
+- Recompare (circular refresh arrow) -- re-runs the compare (same as F5 / the menu's
+  Recompare). While a compare runs, the button becomes Cancel (an X icon) and
   cancels that tab's running compare; when the compare finishes or is
-  cancelled it becomes ↻ Recompare again. The swap to × Cancel is
+  cancelled it becomes Recompare again. The swap to Cancel is
   DELAYED by one second after the compare starts, and a click landing
   inside that second is swallowed: a double-click (or a late
   button-up) on Recompare can no longer cancel the compare it just
@@ -858,33 +878,35 @@ into the compare view):
   later, or immediately via the "Cancel compare" command / the tab
   context menu. If the compare finishes within the delay (small
   files compare in well under a second), the button simply stays
-  ↻ Recompare with the result.
+  Recompare with the result.
   While a compare runs, the two editors lock read-only (busy
   placeholder in both halves) -- but only once the compare has been
   running for over 5 seconds: a compare that finishes inside those
   5 seconds never locks the editors at all, they stay fully
   editable for its whole duration. The lock is released as before
   the moment the compare finishes or is cancelled.
-- ↑ Prev / ↓ Next -- jump to the previous/next difference (same as
+- Prev (up chevron) / Next (down chevron) -- jump to the previous/next difference (same as
   Alt+Up / Alt+Down). Disabled while there are no differences or a
   compare is running.
-- → Copy / ← Copy -- copy the current difference hunk to the right /
+- Copy to right (right arrow) / Copy to left (left arrow) -- copy the current difference hunk to the right /
   left side (same as Alt+Right / Alt+Left). Both halves' carets are
   parked at the hunk start before the text change, so undo/redo
   lands the caret at the copied hunk instead of jumping to a far-off
   line, and the buttons never move the editor focus: the caret stays
   where the user left it.
-- ≡ Ignore 2/5 ▾ -- dropdown with the five "ignore" options as
+- Ignore 2/5 (list icon) -- dropdown with the five "ignore" options as
   CHECKABLE items -- multiple options can be checked at once (they
   combine; see "Ignore options" below). The counter shows how many of
-  the five are enabled (omitted when none is). The last item, after a
+  the five are enabled (omitted when none is). The small caret button
+  to the right of the text marks the dropdown (it opens the same menu
+  as the button itself). The last item, after a
   separator, is "Uncheck all options". Ticking an item re-runs the
   compare immediately; the dropdown is rebuilt on every compare start
   so it always matches the config dialog and the tab context menu.
   While a pure-Python algorithm is the effective one, the items
   disable themselves and an explanatory item heads the menu (same
   guard as the tab context menu).
-- ★ Preset ▾ -- dropdown with quick "preset" combinations: "Preset 1:
+- Preset (star icon) -- dropdown with quick "preset" combinations: "Preset 1:
   Fastest comparison - Myers, Fast Align On, Absorb Off" and
   "Preset 2: Better readability (slower) - Histogram, Fast Align
   On, Absorb On" -- the original preset combinations with only
@@ -918,15 +940,15 @@ into the compare view):
   immediately. The button is disabled while a compare runs (like
   the Ignore dropdown); its tooltip shows the current algorithm +
   both beautify states (align fast / slow / off, absorb on / off).
-- ⇋ Swap -- swap the two sides of this compare tab (same as the
+- Swap (two opposing arrows) -- swap the two sides of this compare tab (same as the
   "Swap compared editors" command): the texts trade places together
   with their syntax highlighting and per-side settings, and the
   compare re-runs automatically. Not available while a compare is
   running in this tab (the command's own guard refuses it with a
   status hint).
-- ↔ Resize -- resize the two editors to equal width (50/50) after
+- Resize (two panels with a double arrow) -- resize the two editors to equal width (50/50) after
   dragging the splitter.
-- ▦ View ▾ -- dropdown to show / hide the surrounding UI from the
+- View (four-pane window icon) -- dropdown to show / hide the surrounding UI from the
   compare tab: "Hide all" flips everything at once, "Show all"
   restores everything EXCEPT the side and bottom panels (a bulk show
   must not force those docked tool windows open, so their items stay
@@ -942,7 +964,7 @@ into the compare view):
   once with no re-compare. Unlike Ignore / Preset the button stays
   enabled while a compare runs; its tooltip lists the currently
   hidden items.
-- ⚙ Config -- opens the Differ 2 options dialog.
+- Config (gear) -- opens the Differ 2 options dialog.
 - status label (right side) -- shows the compare state: "Comparing..."
   while a compare runs, "N differences" / "No differences" when it
   finishes, "Cancelled" after a cancel. This replaces the old status
@@ -1822,10 +1844,34 @@ Toolbar section (see the "Toolbar" chapter above for details):
   session-restored compare tabs (on the tab's first activation).
 - differ2.toolbar.show_btn_text: Show button texts in the toolbar
   (default: on)
-  When on, buttons show "↻ Recompare", "↑ Prev", "↓ Next", "← Copy",
-  "→ Copy", "≡ Ignore 2/5 ▾", "★ Preset ▾", "⇋ Swap", "↔ Resize",
-  "▦ View ▾", "⚙ Config"; when off, only the UTF-8 icons are shown (the Ignore
-  button keeps its enabled-options counter).
+  When on, buttons show their picture icon plus a text caption
+  ("Recompare", "Prev", "Next", "Copy", "Ignore 2/5", "Preset",
+  "Swap", "Resize", "View", "Config"); when off, only the picture
+  icons are shown (the Ignore button keeps its enabled-options
+  counter, and the dropdown-caret buttons stay next to their menu
+  buttons). Without the icon files (or on an old build without the
+  imagelist API) the buttons fall back to UTF-8 glyph captions and
+  the texts toggles those instead.
+- differ2.toolbar.icon_theme: Icon set for the toolbar buttons
+  (default: Auto-detect)
+  Which of the two picture-icon sets the toolbar uses. Auto-detect
+  reads the live toolbar background (the UI theme's editor
+  background) and takes the set tuned for it -- near-white glyphs on
+  dark backgrounds, near-black on light ones -- and re-detects on
+  every UI theme switch. Dark / Light pin one set unconditionally
+  (for when the detection does not match your taste, e.g. a theme
+  whose background sits near the light/dark midpoint).
+  Only used when the toolbar is shown and the icon files are
+  installed.
+- differ2.toolbar.icon_size: Icon size in the toolbar (default: Auto
+  (DPI))
+  Pixel size of the toolbar's picture icons. Auto (DPI) follows the
+  OS scaling -- 16px at 100% up to 32px at 200%. A fixed choice
+  (16 / 20 / 24 / 28 / 32) always uses that size and ignores the
+  DPI; use it when the DPI-scaled icons feel too small or too big
+  for your screen or font.
+  Only used when the toolbar is shown and the icon files are
+  installed.
 
 Folders section (see the "Compare folders" chapter above for details):
 - differ2.dirs.quick_only: Fast (sampling) folder compare (default:

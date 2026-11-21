@@ -3,9 +3,13 @@
 A small toolbar docked to the TOP of every compare tab (the editor
 parent's top side), built with dlg_proc:
 
-  [↻ Recompare or × Cancel] | [↑ Prev][↓ Next] | [→ Copy][← Copy] |
-  [≡ Ignore 2/5 ▾] [★ Preset ▾] | [⇋ Swap] [↔ Resize] [▦ View ▾] [⚙ Config]
+  [(pic) Recompare or (pic) Cancel] | [(pic) Prev][(pic) Next] |
+  [(pic) Copy][(pic) Copy] | [(pic) Ignore 2/5][(▾)] [(pic) Preset][(▾)] |
+  [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Config]
   ...status label
+
+(the (▾) buttons are the small dropdown-caret companions of the three
+menu buttons -- see "PICTURE ICONS" below).
 
 Everything the toolbar does goes through the Command object of
 cuda_differ2/__init__.py, which passes itself to every module-level
@@ -28,18 +32,48 @@ Implementation notes:
   the plugin must free the form itself in on_close (see destroy()).
 
 * BUTTONS are 'button_ex' controls (application-themed, CudaText's own
-  button look) in flat mode with kind=BTNKIND_TEXT_ONLY, so UTF-8 icon
-  captions render like native toolbar buttons. Separators are
-  button_ex with kind=BTNKIND_SEP_HORZ (a vertical line: the 'HORZ'
-  kind is for controls placed in a horizontal row).
+  button look) in flat mode. Every button carries a PICTURE icon from
+  the plugin's own PNG tree icons/toolbar/<set>/<size>/ (see the
+  picture-icons section below): kind BTNKIND_TEXT_ICON_HORZ with the
+  texts on, BTNKIND_ICON_ONLY with them off; the icon comes from a
+  per-form imagelist via button_proc(BTN_SET_IMAGELIST /
+  BTN_SET_IMAGEINDEX). Separators are button_ex with kind=
+  BTNKIND_SEP_HORZ (a vertical line: the 'HORZ' kind is for controls
+  placed in a horizontal row).
+
+* PICTURE ICONS: the old UTF-8 glyph captions (↻ ↑ ↓ → ← ≡ ★ ⇋ ↔ ▦ ⚙
+  ▾) render as tofu boxes on fonts without those code points -- the
+  reason this whole tree exists. The PNG files live in
+  icons/toolbar/{dark,light}/{16,20,24,28,32}/<name>.png (12 names =
+  the 11 buttons + 'cancel' for the Recompare->Cancel swap). The set
+  is picked from the LIVE toolbar background (EdTextBg) luminance:
+  dark backgrounds get the near-white 'dark' glyphs, light and
+  light-grey backgrounds the near-black 'light' glyphs; the pixel size
+  is picked from the OS DPI (16px at 100% ... 32px at 200%). The
+  options differ2.toolbar.icon_theme / icon_size pin either choice by
+  hand ('auto', the default, keeps the automatic pick). apply_theme()
+  rebuilds the imagelist when a theme switch moves the background
+  across the light/dark midpoint (a pinned set never moves). The
+  dropdown caret is NOT baked into the menu buttons' icons -- it is a
+  small separate caret button chained to the right of Ignore /
+  Preset / View (icon 'menu', after the text, so the menu glyphs
+  themselves stay full-size like every other button; see
+  _add_caret_button). When the icon tree is missing or the
+  imagelist/button APIs fail, every button falls back to the old
+  UTF-8 glyph captions (the _BTNS glyph column) with kind=
+  BTNKIND_TEXT_ONLY, so an old build or a pruned install never loses
+  the toolbar.
 
 * SIZING: buttons are AUTO-SIZED -- control prop 'autosize' makes
   TATButton compute its width from the caption measured with the REAL
-  UI-theme font, DPI-scaled (TATButton.SetAutoSize), so no text or icon
-  can ever be cut off HORIZONTALLY. No widths are computed here at all;
-  the w_min constraint only keeps icon-only buttons clickable.
-  Re-setting the prop (a caption change is always followed by an
-  'autosize': True re-set) re-runs the width computation.
+  UI-theme font, DPI-scaled (TATButton.SetAutoSize); with a button
+  imagelist attached the ICON's width is counted in as well
+  (SetAutoSize: abuTextIconHorz = NText+NGap+NIcon+NGap, abuIconOnly
+  = NIcon+NGap), so no text or icon can ever be cut off
+  HORIZONTALLY. The KIND is (re)applied before every caption+autosize
+  re-set -- the width pass must see the final kind. No widths are
+  computed here at all; the w_min constraint only keeps icon-only
+  buttons clickable.
 
   HEIGHT: TATButton.SetAutoSize does NOT size the height -- it centers
   the caption in whatever height the layout gives the control
@@ -176,7 +210,17 @@ dialog):
 * differ2.toolbar.show_toolbar (default on) -- create/hide toolbars.
 * differ2.toolbar.show_btn_text (default on) -- full captions vs
   icon-only buttons.
+* differ2.toolbar.icon_theme (default 'auto') -- which picture-icon
+  set the buttons use: 'auto' = detect from the toolbar background
+  (EdTextBg luminance), 'dark' = the near-white glyphs for dark
+  themes, 'light' = the near-black glyphs for light themes.
+* differ2.toolbar.icon_size (default 'auto') -- pixel size of the
+  picture icons: 'auto' = the OS-DPI pick (16 at 100% ... 32 at
+  200%), or one of 16 / 20 / 24 / 28 / 32 pinned by hand (a pinned
+  size ignores the DPI).
 """
+
+import os
 
 import cudatext as ct
 import cudax_lib as ctx
@@ -237,6 +281,151 @@ def _split_color():
     except Exception:
         pass
     return 0x808080
+
+
+# ---------------------------------------------------------------------------
+# Picture icons (icons/toolbar/...).
+#
+# The toolbar's buttons express their glyphs as PNG pictures, not as
+# UTF-8 font characters: the old glyph captions (↻ ↑ ↓ → ← ≡ ★ ⇋ ↔ ▦ ⚙
+# ▾) are missing from many real-world UI fonts and rendered as tofu
+# boxes. The PNG tree ships two theme-tuned sets and five pixel
+# sizes:
+#
+#   icons/toolbar/<set>/<size>/<name>.png
+#     set:  'dark'  (near-white glyphs -- black/dark backgrounds)
+#           'light' (near-black glyphs -- white/light/light-grey
+#                   backgrounds)
+#     size: 16 20 24 28 32  (16px at 100% DPI ... 32px at 200%)
+#     name: recompute cancel prev next copy_left copy_right ignore
+#           presets swap resize view config   (the 12 button icons)
+#           menu                                  (the dropdown caret)
+#
+# The 13th file menu.png is the dropdown-caret triangle of the three
+# caret buttons (see _add_caret_button) and is OPTIONAL: a tree without
+# it still loads -- the menu buttons then carry no caret (they open
+# their dropdown on click all the same).
+#
+# The set is re-picked on every UI theme switch (apply_theme -> the
+# EdTextBg luminance midpoint) and the size on form creation (OS DPI)
+# -- unless the differ2.toolbar.icon_theme / icon_size options pin
+# them ('auto', the default, keeps the automatic pick). A missing tree
+# / failed imagelist API silently falls back to the old glyph captions
+# -- the buttons must never disappear.
+# ---------------------------------------------------------------------------
+
+# This file's folder = the plugin's root (cuda_differ2/).
+_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# The 12 icon names = the 11 buttons + 'cancel' (the Recompare button
+# swaps to it while a compare runs, past the _CANCEL_DELAY_MS window).
+# The dropdown caret 'menu' is NOT here -- it is optional (see the
+# tree comment above and _icon_files).
+_ICON_NAMES = (
+    'recompare', 'cancel', 'prev', 'next', 'copy_left', 'copy_right',
+    'ignore', 'presets', 'swap', 'resize', 'view', 'config',
+)
+
+# Available pixel sizes of the icon tree, ascending.
+_ICON_SIZES = (16, 20, 24, 28, 32)
+
+# Icon set names (the tree's subfolders).
+_ICON_SETS = ('dark', 'light')
+
+# EdTextBg luminance midpoint -> icon set: below it the background is
+# dark enough for the near-white 'dark' glyphs, at or above it the
+# near-black 'light' glyphs win. The value sits at the contrast
+# crossover of the two glyph colors (#ECECEC vs #2E2E2E), i.e. just
+# around the sRGB mid-grey -- so mid-grey backgrounds (where both are
+# mediocre) take the dark set, whose glyphs also looked better there.
+_ICON_LUM_MID = 0.22
+
+
+def _bg_luminance():
+    """Perceived (Rec.709, linearized) luminance of the toolbar's
+    background color -- 0.0 black .. 1.0 white -- or None when the
+    theme does not provide EdTextBg. CudaText color ints are BGR
+    (Delphi TColor): the LOW byte is red."""
+    c = _ed_text_bg()
+    if c is None:
+        return None
+    try:
+        c = int(c)
+    except (TypeError, ValueError):
+        return None
+
+    def lin(v):
+        # sRGB transfer function -> linear light
+        return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
+    r = lin((c & 0xFF) / 255.0)
+    g = lin(((c >> 8) & 0xFF) / 255.0)
+    b = lin(((c >> 16) & 0xFF) / 255.0)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _icon_set_for_bg():
+    """Icon set name for the CURRENT toolbar background: 'dark' /
+    'light' (see the midpoint above). An unknown background (no theme
+    color) is treated as light -- the create() fallback paints the
+    form white there."""
+    lum = _bg_luminance()
+    if lum is None:
+        lum = 1.0
+    if lum < _ICON_LUM_MID:
+        return 'dark'
+    return 'light'
+
+
+def _icon_size_px():
+    """Pixel size of the toolbar icons for the current OS DPI: the
+    96-DPI base 16, scaled like every other raw-pixel metric (see
+    _scaled), snapped UP to the nearest size the icon tree ships --
+    the imagelist API needs PNGs exactly of its own size."""
+    want = _scaled(16)
+    for s in _ICON_SIZES:
+        if s >= want:
+            return s
+    return _ICON_SIZES[-1]
+
+
+def _conf_icon_size(value):
+    """Pixel size forced by the differ2.toolbar.icon_size option, or
+    None for 'auto' / anything unrecognized: the option stores a
+    string ('auto', '16', '20', ...), so both str and int are
+    accepted."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n in _ICON_SIZES else None
+
+
+def _conf_icon_set(value):
+    """Icon set forced by the differ2.toolbar.icon_theme option, or
+    None for 'auto' / anything unrecognized."""
+    return value if value in _ICON_SETS else None
+
+
+def _icon_files(set_name, size):
+    """{icon name: PNG path} of one set/size, or {} when the tree (or
+    that size) is not installed. The 12 button icons are all required
+    -- a half-installed tree is not used (the fallback glyphs are
+    better than a toolbar where random buttons lost their faces). The
+    dropdown caret 'menu' is optional: it is included when present,
+    and a tree without it simply gets no caret buttons."""
+    d = os.path.join(_PLUGIN_DIR, 'icons', 'toolbar',
+                     set_name, str(size))
+    out = {}
+    for n in _ICON_NAMES:
+        p = os.path.join(d, n + '.png')
+        if not os.path.isfile(p):
+            return {}
+        out[n] = p
+    p = os.path.join(d, 'menu.png')
+    if os.path.isfile(p):
+        out['menu'] = p
+    return out
 
 
 # The five ignore options, exposed as checkable items of the toolbar's
@@ -519,6 +708,11 @@ _BTN_GAP_INNER = 8
 _SEP_GAP = 6
 # Width of the vertical separator buttons.
 _SEP_W = 2
+# sp_l of a dropdown-caret companion button -- tight: the caret
+# visually belongs to its menu button (like the old caption's
+# trailing ' \u25be'), the button's own trailing auto-size gap
+# provides the real separation.
+_CARET_GAP = 1
 # Minimum width of a button (constraint): keeps single-glyph icon-only
 # buttons comfortably clickable.
 _BTN_W_MIN = 26
@@ -610,14 +804,18 @@ class CompareToolbar:
     """
 
     # (name, kind, icon, text) in visual order -- five groups:
-    # [Recompare/Cancel] | [Prev][Next] | [→ Copy][← Copy] |
-    # [Ignore][Preset] | [Swap][Resize][View][Config]. The 'ignore'
-    # caption is assembled dynamically (see _ignore_caption), the
-    # 'presets' and 'view' captions carry the dropdown arrow (see
-    # _presets_caption / _view_caption), the recompare button swaps
-    # icon/text with '× Cancel' while a compare runs -- but DELAYED by
-    # _CANCEL_DELAY_MS (the swap must not be live at the moment the
-    # kick-off click's double-click twin lands on the button).
+    # [Recompare/Cancel] | [Prev][Next] | [Copy to right][Copy to left] |
+    # [Ignore][caret][Preset][caret] | [Swap][Resize][View][caret][Config].
+    # The 'icon' column is the LEGACY UTF-8 glyph -- used only when the
+    # picture icons are unavailable (missing icon tree / failed
+    # imagelist API); with pictures on, the icon comes from the form's
+    # own imagelist (see _setup_icons) and the caption is bare text.
+    # The 'ignore' caption is assembled dynamically (see
+    # _ignore_caption), the 'presets' and 'view' captions are plain
+    # text, and the recompute button swaps icon/text with 'Cancel'
+    # while a compare runs -- but DELAYED by _CANCEL_DELAY_MS (the
+    # swap must not be live at the moment the kick-off click's
+    # double-click twin lands on the button).
     _BTNS = (
         ('recompare', 'btn', '\u21bb', 'Recompare'),
         ('sep1',       'sep', None, None),
@@ -636,6 +834,11 @@ class CompareToolbar:
         ('config',     'btn', '\u2699', 'Config'),
     )
 
+    # The three dropdown buttons -- each gets a small caret companion
+    # button chained to its right when the icon tree ships menu.png
+    # (see _add_caret_button).
+    _MENU_BTNS = ('ignore', 'presets', 'view')
+
     def __init__(self, cmd, session, a_ed):
         self.cmd = cmd
         self.session = session
@@ -651,12 +854,24 @@ class CompareToolbar:
         self.menu_guard_item = None
         self.comparing = False
         # Cancel-button state machine (see set_comparing):
-        # _cancel_shown -- the '× Cancel' caption is CURRENTLY on the
-        #   button (False during the _CANCEL_DELAY_MS grace window, so
-        #   the button still reads Recompare right after kick-off);
+        # _cancel_shown -- the 'Cancel' face (icon + text) is CURRENTLY
+        #   on the recompare button (False during the _CANCEL_DELAY_MS
+        #   grace window, so the button still reads Recompare right
+        #   after kick-off);
         # _cancel_swap_pending -- the one-shot swap timer is armed.
         self._cancel_shown = False
         self._cancel_swap_pending = False
+        # Picture-icon state (see _setup_icons): h_imglist -- the
+        # form-owned imagelist handle; _icon_idx -- icon name ->
+        # imagelist index; _icon_set / _icon_size -- the set and pixel
+        # size it was built from ('dark'/'light', 16..32 -- for
+        # apply_theme's midpoint check and apply_icon_options');
+        # _icons_ok -- False = legacy UTF-8 glyph captions.
+        self.h_imglist = None
+        self._icon_idx = {}
+        self._icon_set = None
+        self._icon_size = None
+        self._icons_ok = False
         self.n_diffs = 0
         self.show_text = True
         self.status = ''
@@ -697,6 +912,12 @@ class CompareToolbar:
         # prop-set time).
         self._add_bottom_border()
 
+        # Picture icons BEFORE the buttons: _add_button asks the icon
+        # state for the initial kind (text+icon / icon-only / the
+        # legacy text-only fallback), so the first paint is already
+        # the final look.
+        self._setup_icons()
+
         # Controls are chained left-to-right with anchors: each control's
         # a_l is the PREVIOUS control's ']' (right side), so the row
         # re-flows by itself whenever any button's auto-sized width
@@ -706,9 +927,16 @@ class CompareToolbar:
         for name, kind, icon, text in self._BTNS:
             if kind == 'sep':
                 self._add_separator(name, prev)
+                prev = name
             else:
                 self._add_button(name, icon, text, prev, prev_kind)
-            prev = name
+                prev = name
+                # A dropdown button's caret companion is chained to ITS
+                # right, so the next control anchors to the caret.
+                if name in self._MENU_BTNS and self._icon_idx.get(\
+                        'menu', -1) >= 0:
+                    self._add_caret_button(name)
+                    prev = name + '_caret'
             prev_kind = kind
 
         # Status label on the right: the compare state / diff count.
@@ -752,6 +980,18 @@ class CompareToolbar:
         previous control ('' = the form for the first one)."""
         return (prev, ']') if prev else ('', '[')
 
+    def _btn_kind(self, cap=''):
+        """TATButton kind for the current mode: BTNKIND_TEXT_ICON_HORZ
+        with button texts on (or when a counter caption survives in
+        icon-only mode -- the Ignore button's '2/5'), BTNKIND_ICON_ONLY
+        for bare icons, BTNKIND_TEXT_ONLY as the legacy no-pictures
+        fallback."""
+        if not self._icons_ok:
+            return ct.BTNKIND_TEXT_ONLY
+        if self.show_text or cap:
+            return ct.BTNKIND_TEXT_ICON_HORZ
+        return ct.BTNKIND_ICON_ONLY
+
     def _add_button(self, name, icon, text, prev, prev_kind=None):
         n = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_ADD, 'button_ex')
         self.ctl[name] = n
@@ -776,11 +1016,12 @@ class CompareToolbar:
         hb = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_HANDLE, index=n)
         self.hbtn[name] = hb
         try:
-            ct.button_proc(hb, ct.BTN_SET_KIND, ct.BTNKIND_TEXT_ONLY)
+            ct.button_proc(hb, ct.BTN_SET_KIND, self._btn_kind())
             ct.button_proc(hb, ct.BTN_SET_FLAT, True)
             ct.button_proc(hb, ct.BTN_SET_FOCUSABLE, False)
         except Exception:
             pass
+        self._apply_button_icon(name)
 
     def _add_separator(self, name, prev):
         n = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_ADD, 'button_ex')
@@ -806,6 +1047,50 @@ class CompareToolbar:
             ct.button_proc(hb, ct.BTN_SET_FOCUSABLE, False)
         except Exception:
             pass
+
+    def _add_caret_button(self, name):
+        """The small dropdown-caret companion of a menu button: an
+        icon-only flat button showing the 'menu' triangle, chained to
+        the RIGHT of '<name>' (so it sits after the button's icon AND
+        text) and opening the very same dropdown on click. This is
+        what marks Ignore / Preset / View as menus now that their
+        icons no longer carry a baked-in caret: the glyphs stay
+        full-size like every other button's, and the caret is its own
+        clearly visible picture (the old baked one had to shrink the
+        glyph to make room and was itself tiny).
+
+        sp_l is tight (the caret visually belongs to its button, like
+        the old caption's trailing ' ▾'); the button's own
+        trailing auto-size gap provides the actual separation. No
+        w_min: the auto-sized icon-cell width (cell + NGap) is
+        clickable enough for a secondary target that only duplicates
+        the button next to it."""
+        cname = name + '_caret'
+        n = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_ADD, 'button_ex')
+        self.ctl[cname] = n
+        ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_SET, index=n, prop={
+            'name': cname,
+            'cap': '',
+            'autosize': True,
+            'a_l': self._anchor_left(name),
+            'a_t': ('', '['),
+            'a_b': ('brd', '['),
+            'sp_l': _CARET_GAP,
+            'sp_t': _BTN_V_PAD,
+            'sp_b': _BTN_V_PAD,
+            'tab_stop': False,
+            'on_change': self._on_button,
+        })
+        hb = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_HANDLE, index=n)
+        self.hbtn[cname] = hb
+        try:
+            ct.button_proc(hb, ct.BTN_SET_KIND, ct.BTNKIND_ICON_ONLY)
+            ct.button_proc(hb, ct.BTN_SET_FLAT, True)
+            ct.button_proc(hb, ct.BTN_SET_FOCUSABLE, False)
+        except Exception:
+            pass
+        self._apply_button_icon(cname)
+        self._set_hint(cname, self._tooltip(name))
 
     def _add_status_label(self):
         n = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_ADD, 'label')
@@ -834,8 +1119,15 @@ class CompareToolbar:
     # -- captions / layout --------------------------------------------------
 
     def _caption(self, icon, text):
-        """Caption for a button: 'icon text' while button texts are on,
-        the bare icon otherwise."""
+        """Caption for a button: with the picture icons on, the bare
+        (translated) text while button texts are shown, and '' in
+        icon-only mode -- the imagelist carries the glyph. With the
+        icons off (missing tree / failed API), the legacy UTF-8 glyph
+        caption: 'glyph text' or the bare glyph."""
+        if self._icons_ok:
+            if self.show_text and text:
+                return _(text)
+            return ''
         if self.show_text and text:
             return icon + ' ' + _(text)
         return icon
@@ -847,42 +1139,197 @@ class CompareToolbar:
         return enabled, len(IGNORE_OPTS)
 
     def _ignore_caption(self):
-        """'≡ Ignore 2/5 ▾' -- the counter shows how many of the options
+        """'Ignore 2/5' -- the counter shows how many of the options
         are enabled; with none enabled the numbers are omitted; with
-        button texts off only the glyphs remain."""
+        button texts off the counter ALONE survives next to the icon
+        (the dropdown caret is the companion button to the right, and
+        the legacy glyph + trailing arrow only appear in the
+        no-pictures fallback)."""
         n, total = self._ignore_counts()
         counter = ' {}/{}'.format(n, total) if n else ''
+        if self._icons_ok:
+            if self.show_text:
+                return _('Ignore') + counter
+            return counter.strip()
         arrow = ' \u25be'
         if self.show_text:
             return '\u2261 ' + _('Ignore') + counter + arrow
         return '\u2261' + counter + arrow
 
     def _presets_caption(self):
-        """'★ Preset ▾' -- the trailing arrow marks it as a dropdown
-        (the Ignore twin's convention); with button texts off only the
-        glyph and the arrow remain."""
+        """'Preset' -- the dropdown caret is the companion button to
+        the right; the legacy star glyph + trailing arrow only appear
+        in the no-pictures fallback."""
+        if self._icons_ok:
+            return _('Preset') if self.show_text else ''
         if self.show_text:
             return '\u2605 ' + _('Preset') + ' \u25be'
         return '\u2605 \u25be'
 
     def _view_caption(self):
-        """'▦ View ▾' -- the trailing arrow marks it as a dropdown (the
-        Ignore twin's convention); with button texts off only the glyph
-        and the arrow remain."""
+        """'View' -- the dropdown caret is the companion button to the
+        right; the legacy pane glyph + trailing arrow only appear in
+        the no-pictures fallback."""
+        if self._icons_ok:
+            return _('View') if self.show_text else ''
         if self.show_text:
             return '\u25a6 ' + _('View') + ' \u25be'
         return '\u25a6 \u25be'
 
+    def _wanted_set(self):
+        """Icon set the options ask for: the differ2.toolbar.icon_theme
+        value ('dark'/'light') when it pins one, else the automatic
+        EdTextBg-luminance pick ('auto')."""
+        conf = None
+        try:
+            conf = _conf_icon_set(self.cmd.cfg.get('icon_theme', 'auto'))
+        except Exception:
+            conf = None
+        return conf if conf else _icon_set_for_bg()
+
+    def _wanted_size(self):
+        """Pixel size the options ask for: the differ2.toolbar.icon_size
+        value (16..32) when it pins one, else the automatic OS-DPI
+        pick ('auto')."""
+        conf = None
+        try:
+            conf = _conf_icon_size(self.cmd.cfg.get('icon_size', 'auto'))
+        except Exception:
+            conf = None
+        return conf if conf else _icon_size_px()
+
+    def _setup_icons(self, set_name=None, size=None):
+        """(Re)build the form-owned imagelist from the wanted
+        picture-icon set and fill _icon_idx; _icons_ok ends True only
+        when every icon of some set loaded (see _icon_files for the
+        all-or-nothing rule). Reused on theme switches and option
+        changes: the imagelist handle survives, only its images are
+        replaced.
+
+        Candidates, in order: the wanted set at the wanted size (the
+        theme/DPI pick, or the option-pinned one), the wanted set at
+        16px, then the dark / light sets at 16px -- a pruned tree
+        degrades to SOMETHING pictorial before it ever falls back to
+        the legacy glyphs. A total failure (no tree at all, or the
+        imagelist API missing on an ancient build) leaves _icons_ok
+        False and the glyph captions in charge."""
+        if self.h_dlg is None:
+            return
+        if set_name is None:
+            set_name = self._wanted_set()
+        if size is None:
+            size = self._wanted_size()
+        for sname, ssize in ((set_name, size), (set_name, 16),
+                             ('dark', 16), ('light', 16)):
+            files = _icon_files(sname, ssize)
+            if not files:
+                continue
+            try:
+                if self.h_imglist is None:
+                    self.h_imglist = ct.imagelist_proc(
+                        0, ct.IMAGELIST_CREATE, value=self.h_dlg)
+                    if not self.h_imglist:
+                        self.h_imglist = None
+                        return
+                else:
+                    ct.imagelist_proc(self.h_imglist,
+                                      ct.IMAGELIST_DELETE_ALL)
+                if ssize != 16:
+                    # imagelists are 16x16 by default; PNGs must match
+                    # the list size exactly or they load cropped
+                    ct.imagelist_proc(self.h_imglist,
+                                      ct.IMAGELIST_SET_SIZE,
+                                      value=(ssize, ssize))
+                idx = {}
+                loaded = 0
+                for n, p in files.items():
+                    i = ct.imagelist_proc(self.h_imglist,
+                                          ct.IMAGELIST_ADD, value=p)
+                    i = i if i is not None else -1
+                    idx[n] = i
+                    loaded += 1 if i >= 0 else 0
+                if not loaded:
+                    continue
+                self._icon_idx = idx
+                self._icon_set = sname
+                self._icon_size = ssize
+                self._icons_ok = True
+                return
+            except Exception:
+                continue
+        self._icons_ok = False
+        self._icon_idx = {}
+        self._icon_set = None
+        self._icon_size = None
+
+    def _apply_button_icon(self, name, cap=''):
+        """(Re)attach one button's picture icon: imagelist, image
+        index and kind. Called at creation (from _add_button) and from
+        _layout_buttons BEFORE the caption / autosize re-set --
+        TATButton's width pass must see the final kind (icon-only
+        buttons are as wide as their icon, text+icon buttons count
+        both). Caret companion buttons ('<menu>_caret') show the
+        'menu' triangle and are always icon-only. The Cancel swap
+        lives here too: while a compare runs (past the
+        _CANCEL_DELAY_MS grace window) the Recompare button shows the
+        'cancel' X icon."""
+        hb = self.hbtn.get(name)
+        if not hb:
+            return
+        if not (self._icons_ok and self.h_imglist):
+            try:
+                ct.button_proc(hb, ct.BTN_SET_KIND, ct.BTNKIND_TEXT_ONLY)
+            except Exception:
+                pass
+            return
+        iname = name
+        caret = name.endswith('_caret')
+        if caret:
+            iname = 'menu'
+        elif name == 'recompare' and self.comparing \
+                and self._cancel_shown:
+            iname = 'cancel'
+        idx = self._icon_idx.get(iname, -1)
+        if caret and idx < 0:
+            # The rebuilt set carries no menu.png (a hand-swapped tree):
+            # hide the caret instead of showing an empty icon-only
+            # button -- the menu button next to it still works.
+            try:
+                ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_SET,
+                            name=name, prop={'vis': False})
+            except Exception:
+                pass
+            return
+        try:
+            ct.button_proc(hb, ct.BTN_SET_IMAGELIST, self.h_imglist)
+            ct.button_proc(hb, ct.BTN_SET_IMAGEINDEX, idx)
+            if caret:
+                kind = ct.BTNKIND_ICON_ONLY
+            else:
+                kind = self._btn_kind(cap)
+            ct.button_proc(hb, ct.BTN_SET_KIND, kind)
+        except Exception:
+            pass
+        if caret:
+            # un-hide (a previous rebuild may have hidden it)
+            try:
+                ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_SET,
+                            name=name, prop={'vis': True})
+            except Exception:
+                pass
+
     def _layout_buttons(self):
         """(Re)assign the captions of all buttons -- called whenever a
         caption changes (Recompare <-> Cancel swap, Ignore counter,
-        show_btn_text toggle).
+        show_btn_text toggle) and after the icon set was rebuilt.
 
         Widths and positions need NO management here: every caption
         change is followed by an 'autosize': True re-set, which re-runs
         TATButton's width computation for the new caption (measured
-        with the real UI-theme font), and the a_l anchor chain then
-        re-positions all following controls by itself."""
+        with the real UI-theme font; the attached icon's width is
+        counted in too), and the a_l anchor chain then re-positions
+        all following controls by itself. The picture icon / kind is
+        (re)applied BEFORE the caption re-set for the same reason."""
         if self.h_dlg is None:
             return
         for name, kind, icon, text in self._BTNS:
@@ -902,6 +1349,7 @@ class CompareToolbar:
                 cap = self._caption('\u00d7', 'Cancel')
             else:
                 cap = self._caption(icon, text)
+            self._apply_button_icon(name, cap)
             try:
                 # 'cap' first, 'autosize' second: the width pass must
                 # measure the NEW caption.
@@ -909,6 +1357,12 @@ class CompareToolbar:
                             prop={'cap': cap, 'autosize': True})
             except Exception:
                 pass
+        # The caret companions have no caption to refresh, but their
+        # imagelist INDEX changes with every rebuild -- re-attach it.
+        for name in self._MENU_BTNS:
+            cname = name + '_caret'
+            if cname in self.ctl:
+                self._apply_button_icon(cname)
 
     def _tooltip(self, name):
         """Tooltip of a button (hotkey hints included)."""
@@ -999,14 +1453,20 @@ class CompareToolbar:
                 pass
 
     def _set_enabled(self, name, en):
-        n = self.ctl.get(name)
-        if n is None:
-            return
-        try:
-            ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_SET, index=n,
-                        prop={'en': bool(en)})
-        except Exception:
-            pass
+        """Enable/disable a button -- and its caret companion when it
+        has one (the two must never disagree: a dead caret next to a
+        live menu button would promise a menu it cannot open, a live
+        caret next to a dead button is a lie the other way round)."""
+        en = bool(en)
+        for n2 in (name, name + '_caret'):
+            n = self.ctl.get(n2)
+            if n is None:
+                continue
+            try:
+                ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_SET, index=n,
+                            prop={'en': en})
+            except Exception:
+                pass
 
     def _update_nav_enabled(self):
         """Enable/disable the diff-navigation buttons: disabled while a
@@ -1134,12 +1594,32 @@ class CompareToolbar:
             return
         self._layout_buttons()
 
+    def apply_icon_options(self):
+        """Apply the differ2.toolbar.icon_theme / icon_size options
+        after a config change: rebuild the imagelist when the wanted
+        set or size moved, and relayout the buttons (the new icons may
+        be a different pixel size). A toolbar still on the fallback
+        glyphs just retries _setup_icons -- when the tree is missing
+        that stays a cheap no-op."""
+        if self.h_dlg is None:
+            return
+        want_set = self._wanted_set()
+        want_size = self._wanted_size()
+        if self._icons_ok and want_set == self._icon_set \
+                and want_size == self._icon_size:
+            return
+        self._setup_icons(set_name=want_set, size=want_size)
+        self._layout_buttons()
+
     def apply_theme(self):
         """Re-apply the toolbar colors for the (possibly switched) UI
         theme: background EdTextBg, status-label font EdTextFont,
-        border-line color SplitMain. All must be re-read together --
-        a theme switch can flip light<->dark, and a stale color on the
-        new background is the black-on-black bug again."""
+        border-line color SplitMain -- and the picture icons: with the
+        automatic set pick a theme switch can move the background
+        across the dark/light midpoint, and a stale icon set on the
+        new background is the black-on-black bug again (light glyphs
+        on a light theme read as nothing at all). All must be re-read
+        together."""
         if self.h_dlg is None:
             return
         bgcolor = _ed_text_bg()
@@ -1157,6 +1637,15 @@ class CompareToolbar:
                         name='brd', prop={'color': _split_color()})
         except Exception:
             pass
+        # Picture icons: rebuild the imagelist when the (possibly new)
+        # background luminance lands on the other side of the midpoint.
+        # A pinned set (icon_theme != 'auto') never moves here -- the
+        # user asked for it, it stays.
+        if self._icons_ok:
+            want = self._wanted_set()
+            if want != self._icon_set:
+                self._setup_icons(set_name=want)
+                self._layout_buttons()
 
     # -- ignore popup menu --------------------------------------------------
 
@@ -1674,7 +2163,8 @@ class CompareToolbar:
 
     def _on_button(self, id_dlg, id_ctl, data='', info=''):
         """on_change dispatcher of all toolbar buttons (id_ctl is the
-        control index)."""
+        control index). Caret companion buttons route to their menu
+        button's action -- clicking either opens the same dropdown."""
         name = None
         for key, n in self.ctl.items():
             if n == id_ctl:
@@ -1682,6 +2172,8 @@ class CompareToolbar:
                 break
         if name is None:
             return
+        if name.endswith('_caret'):
+            name = name[:-len('_caret')]
         try:
             if name == 'recompare':
                 if self.comparing:
@@ -1788,6 +2280,14 @@ class CompareToolbar:
         self.hbtn = {}
         self.menu_items = {}
         self.menu_guard_item = None
+        # The imagelist is OWNED by the (now freed) form and dies with
+        # it -- compare_dir's row icons use the same pattern. Only the
+        # bookkeeping is cleared here.
+        self.h_imglist = None
+        self._icon_idx = {}
+        self._icon_set = None
+        self._icon_size = None
+        self._icons_ok = False
 
     def is_created(self):
         return self.h_dlg is not None
@@ -1892,13 +2392,14 @@ def update_theme_all():
 def sync_all(cmd):
     """Make the set of toolbars match the current options after a config
     change: destroy toolbars of closed tabs or when show_toolbar is off,
-    apply show_btn_text and refresh the Ignore menus of the surviving
-    ones, and create the missing toolbar of the FOCUSED compare tab
-    only. The toolbars of unvisited compare tabs stay lazy (each is
-    created on its first activation -- on_tab_change / on_focus, see
-    cuda_differ2._ensure_toolbar_for_visit): a config dialog OK must
-    not turn 'lazy' back into 'create N idle forms at once', it only
-    has to show the effect on the tab the user is looking at."""
+    apply show_btn_text / icon_theme / icon_size and refresh the Ignore
+    menus of the surviving ones, and create the missing toolbar of the
+    FOCUSED compare tab only. The toolbars of unvisited compare tabs
+    stay lazy (each is created on its first activation -- on_tab_change
+    / on_focus, see cuda_differ2._ensure_toolbar_for_visit): a config
+    dialog OK must not turn 'lazy' back into 'create N idle forms at
+    once', it only has to show the effect on the tab the user is
+    looking at."""
     show = bool(cmd.cfg.get('show_toolbar', True))
     show_text = bool(cmd.cfg.get('show_btn_text', True))
     for key in list(_TOOLBARS):
@@ -1916,6 +2417,7 @@ def sync_all(cmd):
     for tb in list(_TOOLBARS.values()):
         if tb.is_created():
             tb.set_show_text(show_text)
+            tb.apply_icon_options()
             tb.rebuild_ignore_menu()
     # Lazy creation, focused tab only (None / not a compare tab: the
     # next visit serves it).

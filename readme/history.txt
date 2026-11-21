@@ -1,3 +1,68 @@
+2026.11.22 (by @badrelmers)
++ add: two new toolbar-icon options (config dialog, chapter "toolbar"):
+  * differ2.toolbar.icon_theme (default "auto") -- which picture-icon
+    set the buttons use: "auto" detects from the live toolbar
+    background (EdTextBg luminance), "dark" / "light" pin one set.
+  * differ2.toolbar.icon_size (default "auto") -- pixel size of the
+    icons: "auto" follows the OS DPI (the previous, still-default
+    behavior), or one of 16 / 20 / 24 / 28 / 32 pinned by hand (a
+    pinned size ignores the DPI). A config-dialog OK applies both to
+    the open toolbars at once (sync_all -> apply_icon_options:
+    imagelist rebuilt, buttons re-laid-out).
++ change: the toolbar's picture icons are now TWO theme sets, not
+  three -- the 'grey' set is gone: its charcoal glyphs were
+  indistinguishable from the 'light' set's near-black ones in real
+  use. The automatic set pick is a single light/dark midpoint
+  (EdTextBg luminance 0.21, the contrast crossover of the two glyph
+  colors ~ sRGB #7C7C7C): darker backgrounds get the near-white
+  'dark' glyphs, lighter ones (light-grey included) the near-black
+  'light' glyphs. A pinned icon_theme overrides the pick entirely.
++ change: the dropdown caret of the three menu buttons (Ignore /
+  Preset / View) moved OUT of their icons. It used to be baked into
+  the icon's bottom-right corner, which shrank the visible glyph
+  (menu icons looked smaller than their neighbors) and was itself a
+  tiny mark. The icons are now full-size glyphs like every other
+  button's, and the caret is a small SEPARATE icon-only button
+  (icon 'menu', a solid triangle) chained to the button's right --
+  after icon AND text, exactly where the old glyph captions carried
+  their U+25BE. Clicking the button or its caret opens the same
+  dropdown; both disable together. menu.png is an optional 13th file
+  of the icon tree: a set without it loads fine, the menu buttons
+  just carry no caret. The no-pictures fallback keeps the old
+  glyph-and-arrow captions.
++ change: re-drew the Recompare icon -- a thicker arc with a much
+  bigger, clearly readable arrowhead (the old one was too small to
+  read at 16px).
++ add: PICTURE ICONS for the compare-tab toolbar -- the UTF-8 glyph
+  captions (U+21BB U+2191 U+2193 U+2192 U+2190 U+2261 U+2605 U+21CB
+  U+2194 U+25A6 U+2699 U+25BE) are missing from many real-world UI
+  fonts and rendered as tofu boxes. Every button now carries a PNG
+  icon from the plugin's new icons/toolbar/ tree, attached through a
+  form-owned imagelist (button_proc BTN_SET_IMAGELIST /
+  BTN_SET_IMAGEINDEX) with kind BTNKIND_TEXT_ICON_HORZ (texts on) or
+  BTNKIND_ICON_ONLY (texts off) -- TATButton.SetAutoSize counts the
+  icon width, so the anchor-chained auto-layout is untouched. 12
+  icons (the 11 buttons + 'cancel' for the Recompare->Cancel swap),
+  each in theme-tuned sets and five DPI sizes:
+    icons/toolbar/<set>/<size>/<name>.png
+    size: 16 20 24 28 32  (16px at 100% DPI ... 32px at 200%)
+  The set is picked from the live toolbar background (EdTextBg)
+  luminance and re-picked on every UI theme switch (apply_theme
+  rebuilds the imagelist when the band changes; the old one is
+  owner-freed with the form). The size is picked from the OS DPI.
+  When the icon tree is missing or the imagelist API fails, every
+  button falls back to the old glyph captions with
+  kind=BTNKIND_TEXT_ONLY: an old build or a pruned install keeps the
+  working toolbar. (The 'grey' third set and the baked-in dropdown
+  carets mentioned in early notes were replaced later this same
+  date -- see the entries above.)
++ add: the folder-compare window's row icons are now plain PNG files
+  in the plugin's icons/compare_dir/ folder (same, diff, lonly,
+  ronly, folder, err, chk_on, chk_off). They were embedded in
+  compare_dir.py as a base64 blob and written to a cache folder in
+  settings/ on first use -- that cache and the blob are gone; the
+  imagelist loads the files directly.
+
 2026.11.19 (by @badrelmers)
 - fix: 'ERROR: error on loading json' (cudax.log: _json_loads FAIL on
   cuda_differ2_state.json) after a restart, on a FRESH plugin install
