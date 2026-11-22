@@ -1,4 +1,47 @@
 2026.11.22 (by @badrelmers)
++ fix: "Compare folders of these files" (the toolbar's Folders
+  dropdown and the "Compare folders" context submenu) was permanently
+  DISABLED: the enable test read the two halves' PROP_FN, but the
+  halves are deliberately untitled editors (content via set_text_all,
+  no temp files), so the test answered 'no file' even when both
+  compared originals were saved files. The test now reads the tab's
+  PERSISTED registration -- the set_files / swap time record of the
+  two ORIGINAL documents (new Command._get_orig_names) -- with
+  os.path.isfile as the 'is a real file' gate (an untitled original's
+  display title never names an existing file, a deleted original's
+  path stops naming one); compare_dirs_of_files resolves its two
+  folders the same way (the halves' PROP_FN remains only a fallback
+  for editors outside a registered compare tab).
++ fix: clicking "Compare two new folders..." / "Open compare folders
+  window" (or "of these files") logged 'NOTE: Bad API callback,
+  report to plugin author: module=cuda_differ2;cmd=_toolbar_dirs_timer'
+  and did nothing. CudaText stores every running timer as
+  'callback|tag' and DoPyTimerTick splits that stored string at the
+  FIRST '|' -- the timer payload's info ('<tab id>|<folder key>;')
+  was cut at its own '|', the truncated callback no longer ended
+  with ';' and the parser rejected it. All TIMER payloads now join
+  their values with '::' (new TIMER_STR_SEP, the same pair form
+  tabmenu_files' 'fn0::fn1' already uses); menu-item command strings
+  keep the '|' convention (they do not pass through the timer
+  splitter).
++ add: the compare-tab toolbar now adapts to narrow windows: when
+  the editor parent is too narrow for the text row (a small
+  CudaText window, a vertical split, a detached floating group) it
+  switches itself to icon-only buttons, and switches back once
+  there is room again. Chosen over wrapping to a second row: every
+  button already has a picture icon, the one-row height stays
+  constant (no editor-area jump below the toolbar), and the
+  tooltips keep every action identifiable. Debounced 100ms behind
+  the last resize / caption change (new Command._toolbar_fit_timer
+  <- toolbar's on_resize), with a hysteresis margin against
+  boundary flapping; the show_btn_text option stays the upper bound
+  (the auto mode never shows texts the option turned off) and the
+  no-pictures glyph fallback keeps the old overflow behavior (its
+  glyphs ARE the captions).
++ fix: the side-swap's scroll-to-top wrote {'smooth_pos': 0.0} --
+  the value travels as a string parsed with StrToInt64Def, which
+  cannot parse '0.0', so the write silently kept the previous
+  position instead; it now writes 0.
 + add: a Folders dropdown on the compare-tab toolbar (button placed
   before Config, with its own caret companion like Ignore / Preset /
   View) -- the folder-compare hub:

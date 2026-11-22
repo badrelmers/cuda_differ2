@@ -232,6 +232,16 @@ dialog):
   picture icons: 'auto' = the OS-DPI pick (16 at 100% ... 32 at
   200%), or one of 16 / 20 / 24 / 28 / 32 pinned by hand (a pinned
   size ignores the DPI).
+
+Narrow windows: when the editor parent is too narrow for the text
+row (a small CudaText window, a vertical split, a floating group),
+the toolbar AUTOMATICALLY switches to icon-only buttons and back
+once there is room again -- the show_btn_text option is honored as
+the upper bound (the auto mode never shows texts the option turned
+off), and the no-pictures glyph fallback keeps the old overflow
+behavior (its glyphs ARE the captions). Debounced 100ms behind the
+last resize / layout change, with a hysteresis margin against
+boundary flapping (see the _FIT_* constants).
 """
 
 import os
@@ -760,6 +770,35 @@ _CANCEL_DELAY_MS = 1000
 # Spacing between the status label and the form's right edge.
 _STATUS_SP_R = 10
 
+# --- Narrow-window auto icon-only mode --------------------------------
+#
+# When the editor parent is too narrow for the full-text button row
+# (a small CudaText window, a vertical split, a detached floating
+# group), the toolbar switches ITSELF to icon-only buttons and back
+# when there is room again -- chosen over wrapping to a second row
+# because every button already HAS a picture icon (the icon-only mode
+# is the show_btn_text=False path), the one-row height stays constant
+# (no editor-area jump, no re-layout of the compare view below), and
+# the tooltips keep every action identifiable. The user option
+# differ2.toolbar.show_btn_text stays what it is: the auto mode only
+# ever HIDES texts temporarily, it never shows them while the option
+# is off; without picture icons (the UTF-8 glyph fallback) there is
+# no icon-only mode at all (the glyphs ARE the captions) and the
+# toolbar keeps its old overflow behavior.
+#
+# Hysteresis: collapse as soon as the available width drops below the
+# needed width, expand only once it exceeds it by _FIT_HYST logical
+# px -- without that margin a window resized to sit exactly at the
+# boundary would flip between the two layouts on every caption
+# change (the Ignore counter, the Recompare/Cancel swap).
+_FIT_HYST = 24
+# Debounce of the fit check: resize events storm during an
+# interactive drag, and the anchor re-flow needs a settled layout to
+# measure -- the one-shot timer restarts on every event (CudaText's
+# timer_proc finds the running timer by its callback string), so the
+# check runs once, 100ms after the LAST resize / layout change.
+_FIT_CHECK_MS = 100
+
 
 def _bar_height():
     """Height of the toolbar's BUTTON ZONE: the OS/DPI-correct height of
@@ -909,6 +948,18 @@ class CompareToolbar:
         self.show_text = True
         self.status = ''
         self.height = _total_height()
+        # --- Narrow-window auto icon-only mode (see the _FIT_* block
+        # above): _narrow -- the toolbar is CURRENTLY collapsed to
+        # icon-only buttons because the editor parent is too narrow
+        # for the text row; _text_row_w -- the needed width of the
+        # LAST text-mode layout (row end + status label + right
+        # margin), kept while collapsed so the expand test compares
+        # against the TEXT row, not the (much narrower) icon row;
+        # _in_fit -- re-entrancy guard (the collapse / expand
+        # relayouts must not re-enter the fit check synchronously).
+        self._narrow = False
+        self._text_row_w = None
+        self._in_fit = False
 
     # -- creation ----------------------------------------------------------
 
@@ -937,6 +988,11 @@ class CompareToolbar:
             'h': self.height,
             'border': ct.DBORDER_NONE,
             'color': bgcolor,
+            # Live form-level callback (cudatext.py replaces callables
+            # in any 'on_' prop with its proxy string): the docked form
+            # is resized by the editor parent on every window / split
+            # resize -- the debounce entry of the auto icon-only mode.
+            'on_resize': self._on_form_resize,
         })
 
         # The bottom border FIRST: the buttons' and separators' a_b
@@ -985,6 +1041,11 @@ class CompareToolbar:
 
         self.rebuild_ignore_menu()
         self._update_nav_enabled()
+        # First fit check AFTER the docking (the dock resize fires
+        # on_resize too, but the timer's debounce makes this explicit
+        # arm the safe catch-all): a compare tab created narrow -- a
+        # vertical split, a small window -- starts collapsed.
+        self._arm_fit_check()
         return True
 
     def _add_bottom_border(self):
@@ -1013,6 +1074,14 @@ class CompareToolbar:
         previous control ('' = the form for the first one)."""
         return (prev, ']') if prev else ('', '[')
 
+    def _texts_on(self):
+        """Whether button texts are shown RIGHT NOW: the show_btn_text
+        option AND not currently collapsed into the narrow-window
+        icon-only mode (see the _FIT_* block). The single accessor every
+        caption / kind computation reads -- the option and the auto
+        collapse can never disagree about what a button shows."""
+        return self.show_text and not self._narrow
+
     def _btn_kind(self, cap=''):
         """TATButton kind for the current mode: BTNKIND_TEXT_ICON_HORZ
         with button texts on (or when a counter caption survives in
@@ -1021,7 +1090,7 @@ class CompareToolbar:
         fallback."""
         if not self._icons_ok:
             return ct.BTNKIND_TEXT_ONLY
-        if self.show_text or cap:
+        if self._texts_on() or cap:
             return ct.BTNKIND_TEXT_ICON_HORZ
         return ct.BTNKIND_ICON_ONLY
 
@@ -1158,10 +1227,10 @@ class CompareToolbar:
         icons off (missing tree / failed API), the legacy UTF-8 glyph
         caption: 'glyph text' or the bare glyph."""
         if self._icons_ok:
-            if self.show_text and text:
+            if self._texts_on() and text:
                 return _(text)
             return ''
-        if self.show_text and text:
+        if self._texts_on() and text:
             return icon + ' ' + _(text)
         return icon
 
@@ -1181,11 +1250,11 @@ class CompareToolbar:
         n, total = self._ignore_counts()
         counter = ' {}/{}'.format(n, total) if n else ''
         if self._icons_ok:
-            if self.show_text:
+            if self._texts_on():
                 return _('Ignore') + counter
             return counter.strip()
         arrow = ' \u25be'
-        if self.show_text:
+        if self._texts_on():
             return '\u2261 ' + _('Ignore') + counter + arrow
         return '\u2261' + counter + arrow
 
@@ -1194,8 +1263,8 @@ class CompareToolbar:
         the right; the legacy star glyph + trailing arrow only appear
         in the no-pictures fallback."""
         if self._icons_ok:
-            return _('Preset') if self.show_text else ''
-        if self.show_text:
+            return _('Preset') if self._texts_on() else ''
+        if self._texts_on():
             return '\u2605 ' + _('Preset') + ' \u25be'
         return '\u2605 \u25be'
 
@@ -1204,8 +1273,8 @@ class CompareToolbar:
         right; the legacy pane glyph + trailing arrow only appear in
         the no-pictures fallback."""
         if self._icons_ok:
-            return _('View') if self.show_text else ''
-        if self.show_text:
+            return _('View') if self._texts_on() else ''
+        if self._texts_on():
             return '\u25a6 ' + _('View') + ' \u25be'
         return '\u25a6 \u25be'
 
@@ -1216,8 +1285,8 @@ class CompareToolbar:
         bisected into a left and a right half -- two folders side by
         side, the folder-compare idea)."""
         if self._icons_ok:
-            return _('Folders') if self.show_text else ''
-        if self.show_text:
+            return _('Folders') if self._texts_on() else ''
+        if self._texts_on():
             return '\u25eb ' + _('Folders') + ' \u25be'
         return '\u25eb \u25be'
 
@@ -1410,6 +1479,10 @@ class CompareToolbar:
             cname = name + '_caret'
             if cname in self.ctl:
                 self._apply_button_icon(cname)
+        # The row's width may have moved (Ignore counter, Cancel swap,
+        # icon size change, collapse / expand flip): re-run the fit
+        # decision once the anchors have settled.
+        self._arm_fit_check()
 
     def _tooltip(self, name):
         """Tooltip of a button (hotkey hints included)."""
@@ -1494,22 +1567,27 @@ class CompareToolbar:
         return _('Overview') if key == 'overview' else key
 
     def _tab_files(self):
-        """(fn_left, fn_right) of this compare tab's two halves ('' for
-        a half that is an untitled document), through the linked
-        primary/secondary pair -- the same resolution the save /
-        refresh paths use (either half knows both). Feeds the Folders
-        dropdown's live tooltip and its 'of these files' enable
-        state."""
+        """(fn_left, fn_right) of this compare tab's two ORIGINALS (''
+        for an original that is not a real file on disk), from the
+        tab's PERSISTED registration (Command._get_orig_names -- the
+        set_files / swap time record of which documents the halves
+        were built from). NOT the halves' own PROP_FN: the halves are
+        deliberately untitled editors (content via set_text_all, no
+        temp files), so their PROP_FN is empty and the old
+        halves-based read disabled the 'of these files' item forever.
+        Feeds the Folders dropdown's live tooltip and that item's
+        enable state; os.path.isfile is the 'is a real file' test (an
+        untitled original's display title never names an existing
+        file, a deleted original's path stops naming one)."""
         fn_l = fn_r = ''
         try:
-            h_p = self.a_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
-            h_s = self.a_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
-            if h_p:
-                fn_l = ct.Editor(h_p).get_prop(ct.PROP_FN, '') or ''
-            if h_s:
-                fn_r = ct.Editor(h_s).get_prop(ct.PROP_FN, '') or ''
+            fn_l, fn_r = self.cmd._get_orig_names(self.session.tab_id)
         except Exception:
             fn_l = fn_r = ''
+        if fn_l and not os.path.isfile(fn_l):
+            fn_l = ''
+        if fn_r and not os.path.isfile(fn_r):
+            fn_r = ''
         return fn_l, fn_r
 
     def _folders_tooltip(self):
@@ -1658,7 +1736,9 @@ class CompareToolbar:
     def set_status(self, text):
         """Text of the right-side status label. The label is auto-sized,
         so the caption change alone adjusts its width; the a_r anchor
-        keeps it glued to the form's right edge."""
+        keeps it glued to the form's right edge. The width change feeds
+        the narrow-window fit check (a longer status can be what tips
+        the row over the edge)."""
         self.status = text
         if self.h_dlg is None:
             return
@@ -1667,17 +1747,120 @@ class CompareToolbar:
                         name='status', prop={'cap': text})
         except Exception:
             pass
+        self._arm_fit_check()
 
     def set_show_text(self, show_text):
         """Apply the differ2.toolbar.show_btn_text option: full captions
-        or icons only."""
+        or icons only. The narrow-window auto collapse only ever HIDES
+        texts, so turning the option off also drops any active
+        collapse (both states are icon-only; the flag must not survive
+        as a stale 'expand when wide' promise)."""
         show_text = bool(show_text)
         if self.show_text == show_text:
             return
         self.show_text = show_text
+        if not show_text:
+            self._narrow = False
         if self.h_dlg is None:
             return
         self._layout_buttons()
+
+    # -- narrow-window auto icon-only mode --------------------------------
+
+    def _on_form_resize(self, id_dlg, id_ctl=-1, data=''):
+        """Live on_resize callback of the docked form (cudatext.py's
+        proxy calls it with the form handle and id_ctl=-1): the editor
+        parent resized the toolbar -- the debounce entry of the fit
+        check. Fires a lot during an interactive drag; the armed
+        one-shot timer restarts on every call, so the check runs
+        once, after the LAST event."""
+        self._arm_fit_check()
+
+    def _arm_fit_check(self):
+        """(Re)arm the debounced fit check: Command._toolbar_fit_timer
+        routes back to this toolbar's _fit_check 100ms later. The
+        timer string carries only the tab id (TIMER_STR_SEP rule: no
+        '|' inside a timer info -- see __init__.py). Restarting an
+        armed one-shot is CudaText's own TIMER_START_ONE semantics
+        (the running timer is found by its callback string and
+        re-enabled), so this is a free debounce."""
+        if self.h_dlg is None:
+            return
+        try:
+            callback = ('module=cuda_differ2;cmd=_toolbar_fit_timer;'
+                        'info={};'.format(self.tab_id_str))
+            ct.timer_proc(ct.TIMER_START_ONE, callback, _FIT_CHECK_MS)
+        except Exception:
+            pass
+
+    def _needed_width(self):
+        """Width the toolbar needs in its CURRENT layout: the right end
+        of the button row (the 'config' button is the last chained
+        control; its x+w is the natural row end -- the anchor chain
+        never clips, so the value is honest even when the row already
+        overflows) plus the auto-sized status label and its right
+        margin -- the label must not overlap the last button."""
+        row_end = 0
+        label_w = 0
+        try:
+            p = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_GET, name='config')
+            if p:
+                row_end = int(p.get('x', 0) or 0) + int(p.get('w', 0) or 0)
+            p = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_GET, name='status')
+            if p:
+                label_w = int(p.get('w', 0) or 0)
+        except Exception:
+            return None
+        return row_end + label_w + _STATUS_SP_R
+
+    def _fit_check(self):
+        """THE fit decision (runs on the debounced timer, when resize /
+        layout storms have settled and the anchor chain has re-flowed):
+        compare the toolbar's width with the width the TEXT row needs
+        and flip the narrow icon-only mode accordingly. Only runs while
+        picture icons exist AND the show_btn_text option is on -- the
+        glyph fallback has no icon-only mode (the glyphs are the
+        captions) and an option-off toolbar is icon-only already. The
+        text row's needed width is measured fresh in text mode and
+        CACHED while collapsed (the icon row is much narrower; the
+        expand test must compare against the text row it would return
+        to), with the _FIT_HYST hysteresis against boundary flapping."""
+        if self.h_dlg is None or self._in_fit:
+            return
+        if not self._icons_ok or not self.show_text:
+            if self._narrow:
+                self._narrow = False
+                self._layout_buttons()
+            return
+        try:
+            self._in_fit = True
+            try:
+                props = ct.dlg_proc(self.h_dlg, ct.DLG_PROP_GET)
+                avail = int((props or {}).get('w', 0) or 0)
+            except Exception:
+                avail = 0
+            if avail <= 0:
+                return
+            if self._narrow:
+                needed = self._text_row_w
+            else:
+                needed = self._needed_width()
+                if needed is not None:
+                    self._text_row_w = needed
+            if needed is None:
+                return
+            if not self._narrow and avail < needed:
+                # Too narrow for the text row: collapse to icons.
+                self._narrow = True
+                self._layout_buttons()
+            elif self._narrow and avail >= needed + _scaled(_FIT_HYST):
+                # Room again: back to texts, then re-measure the row
+                # with the restored (fresh) captions on the next tick.
+                self._narrow = False
+                self._layout_buttons()
+                self._arm_fit_check()
+        finally:
+            self._in_fit = False
 
     def apply_icon_options(self):
         """Apply the differ2.toolbar.icon_theme / icon_size options
@@ -2250,8 +2433,9 @@ class CompareToolbar:
         """(Re)build the Folders dropdown: the folder-compare hub with
         its three items -- 'Compare folders of these files' (a NEW
         folder-compare window for the parent folders of the two files
-        this tab compares; DISABLED while either half is an untitled
-        document, since an unsaved file has no folder), 'Compare two
+        this tab compares; DISABLED while either ORIGINAL is not a
+        real file on disk, since an unsaved document has no folder --
+        _tab_files, the persisted-registration read), 'Compare two
         new folders...' (the folder picker) and 'Open compare folders
         window' (focus the most recent folder-compare window / reopen
         the last picked pair / the picker as the last resort). All
@@ -2290,8 +2474,9 @@ class CompareToolbar:
     def popup_folders_menu(self):
         """Show the Folders dropdown right under its button. The menu is
         rebuilt FIRST, so the 'of these files' item's enable state
-        always mirrors the tab's halves (a half saved since the last
-        open re-enables it)."""
+        always mirrors the tab's originals (a compare of two saved
+        files has it enabled -- the old halves-based read kept it
+        disabled because the halves are untitled)."""
         if self.h_dlg is None:
             return
         self.rebuild_folders_menu()
@@ -2320,10 +2505,15 @@ class CompareToolbar:
         must not open while the dropdown is still closing --, 'window'
         focuses / reopens the folder-compare window). The same
         convention as the tabmenu_* callbacks and the toolbar's own
-        _schedule_refresh."""
+        _schedule_refresh.
+
+        The TIMER payload joins the tab id and the folder key with
+        '::' (see TIMER_STR_SEP in __init__.py): a '|' inside a timer
+        callback's info is cut at CudaText's own callback|tag splitter
+        and the whole callback dies as 'Bad API callback'."""
         try:
             callback = ('module=cuda_differ2;cmd=_toolbar_dirs_timer;'
-                        'info={}|{};'.format(self.tab_id_str, action))
+                        'info={}::{};'.format(self.tab_id_str, action))
             ct.timer_proc(ct.TIMER_START_ONE, callback, 100)
         except Exception:
             pass
@@ -2482,6 +2672,19 @@ def get_for(session):
     if session is None:
         return None
     return _TOOLBARS.get(session.tab_id_str)
+
+
+def fit_check_for(tab_id_str):
+    """Run the narrow-window fit decision of ONE compare tab's toolbar
+    (the Command._toolbar_fit_timer routing target; the timer fires
+    100ms after the last resize / layout change). Unknown tab (closed
+    since the timer was armed) or a destroyed toolbar is a no-op."""
+    tb = _TOOLBARS.get(str(tab_id_str))
+    if tb is not None and tb.is_created():
+        try:
+            tb._fit_check()
+        except Exception:
+            pass
 
 
 def ensure_for_session(cmd, session, a_ed=None):

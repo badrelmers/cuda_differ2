@@ -92,6 +92,19 @@ GAP_WIDTH = 5000
 DEFAULT_SYNC_SCROLL = '1'
 U_PREFIX = 'untitled:'
 
+# Separator for MULTI-VALUE payloads inside timer callback strings
+# ('module=...;cmd=...;info=<v1><SEP><v2>;'). MUST NOT be '|' (and the
+# string must keep its trailing ';'): CudaText stores every running
+# timer as 'callback|tag' and its dispatcher (DoPyTimerTick) splits
+# the stored string at the FIRST '|' -- a '|' inside the info value
+# truncates the callback mid-info, the truncated string no longer
+# ends with ';' so every parse pattern fails, and the console shows
+# 'NOTE: Bad API callback, report to plugin author'. Menu-item
+# command strings do NOT go through that splitter (their info may
+# keep the '|' convention); only the TIMER payloads use this sep --
+# the same pair form tabmenu_files' 'fn0::fn1' already uses.
+TIMER_STR_SEP = '::'
+
 
 # ----------------------------------------------------------------------
 # GC pause suppression around the compare's synchronous stretches.
@@ -2100,6 +2113,29 @@ class Command:
             return (None, None)
         return (entry.get('primary_orig_tab_id'), entry.get('secondary_orig_tab_id'))
 
+    def _get_orig_names(self, tab_id):
+        """Return (fn_left, fn_right): the ORIGINAL documents a compare
+        tab was built from, as registered at set_files / swap time --
+        the file PATH for a real file, the display title for an
+        untitled original, ('', '') when unknown. This -- not the
+        halves' PROP_FN -- is the source of truth for 'the two files
+        this tab compares': the halves are deliberately untitled
+        editors filled with set_text_all (no temp files, PROP_FN
+        empty), so reading their PROP_FN answers '' even for a
+        compare of two saved files (the 'of these files' item was
+        permanently disabled that way). Consumers that need a REAL
+        file (folders of these files, ...) validate with
+        os.path.isfile -- an untitled original's title never names an
+        existing file."""
+        session = self._session_for(tab_id)
+        state_key = session.state_key if session is not None else self._current_session_key
+        data = self._load_sessions()
+        entry = data.get(state_key, {}).get(str(tab_id))
+        if not isinstance(entry, dict):
+            return ('', '')
+        return (entry.get('primary_orig_name', '') or '',
+                entry.get('secondary_orig_name', '') or '')
+
     def _enable_autostart(self):
         """Persistently subscribe to on_start2 via plugins.ini so the plugin
         auto-loads on next CudaText startup to restore compare tabs."""
@@ -2319,24 +2355,41 @@ class Command:
         tab context menu): open a NEW folder-compare window for the
         PARENT FOLDERS of the two files compared in a compare tab.
         'a_ed' is any editor of that tab (None = the focused editor);
-        the linked primary/secondary pair is resolved from it, so the
-        LEFT folder is always the left file's. A half that is an
-        untitled document (no file name yet) has no folder -- the call
-        then only reports the problem; the same-folder /
+        its PROP_TAB_ID routes to the tab's PERSISTED registration
+        (_get_orig_names), so the LEFT folder is always the left
+        file's. The halves' own PROP_FN is only a fallback (a
+        non-compare tab, a missing registration): the halves are
+        deliberately untitled, so for compare tabs the registration
+        is what knows the files. A half whose original is an untitled
+        document (or a deleted file) has no folder -- the call then
+        only reports the problem; the same-folder /
         missing-folder cases are reported by compare_directories
         itself."""
         if a_ed is None:
             a_ed = ct.ed
         fn_l = fn_r = ''
         try:
-            h_primary = a_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
-            h_secondary = a_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
-            if h_primary:
-                fn_l = ct.Editor(h_primary).get_prop(ct.PROP_FN, '') or ''
-            if h_secondary:
-                fn_r = ct.Editor(h_secondary).get_prop(ct.PROP_FN, '') or ''
+            tab_id = a_ed.get_prop(ct.PROP_TAB_ID)
         except Exception:
-            fn_l = fn_r = ''
+            tab_id = None
+        if tab_id is not None:
+            fn_l, fn_r = self._get_orig_names(tab_id)
+            fn_l = fn_l if os.path.isfile(fn_l) else ''
+            fn_r = fn_r if os.path.isfile(fn_r) else ''
+        if not fn_l or not fn_r:
+            # Fallback for editors outside a registered compare tab:
+            # the halves' own file names, if any.
+            try:
+                h_primary = a_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
+                h_secondary = a_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
+                if h_primary and not fn_l:
+                    fn = ct.Editor(h_primary).get_prop(ct.PROP_FN, '') or ''
+                    fn_l = fn if os.path.isfile(fn) else ''
+                if h_secondary and not fn_r:
+                    fn = ct.Editor(h_secondary).get_prop(ct.PROP_FN, '') or ''
+                    fn_r = fn if os.path.isfile(fn) else ''
+            except Exception:
+                pass
         if not fn_l or not fn_r:
             msg(_('Cannot compare folders: one of the compared files is '
                   'not saved to disk yet.'), 1)
@@ -3391,11 +3444,30 @@ class Command:
         if ed is not None:
             self.refresh_compare(ed, show_dialog=False)
 
+    def _toolbar_fit_timer(self, tag='', info=''):
+        """Debounced fit check of one compare tab's toolbar: info is the
+        PROP_TAB_ID. The toolbar arms this 100ms one-shot on every
+        resize of its docked form (and after every caption re-layout);
+        restarting an armed one-shot is CudaText's own TIMER_START_ONE
+        semantics, so a resize storm runs the check exactly once, after
+        the LAST event. The toolbar then compares its width with the
+        text row's needed width and flips the narrow-window icon-only
+        mode (see toolbar.py's _FIT_* block). Unknown tab (closed since
+        the timer was armed) is a no-op."""
+        if not info:
+            return
+        difftb.fit_check_for(str(info))
+
     def _toolbar_dirs_timer(self, tag='', info=''):
         """100ms one-shot timer behind EVERY 'Compare folders' menu item
         (the compare-tab toolbar's Folders dropdown and the tab
         context menu's 'Compare folders' submenu): info is
-        '<PROP_TAB_ID>|<folder key>' --
+        '<PROP_TAB_ID>::<folder key>' (TIMER_STR_SEP, NOT the '|' used
+        by the menu-item payloads themselves -- CudaText stores every
+        timer as 'callback|tag' and DoPyTimerTick splits the stored
+        string at the FIRST '|', so a '|' inside a timer's info
+        truncates the callback mid-info and the dispatch dies as
+        'NOTE: Bad API callback') --
           'of_files' -> compare_dirs_of_files: a NEW folder-compare
               window for the parent folders of the two files that
               tab compares;
@@ -3408,9 +3480,9 @@ class Command:
         The timer callback form (not a live func=) because the items
         come from menu_proc command strings; unknown keys are safe
         no-ops."""
-        if not info or '|' not in str(info):
+        if not info or TIMER_STR_SEP not in str(info):
             return
-        tab_id, key = str(info).split('|', 1)
+        tab_id, key = str(info).split(TIMER_STR_SEP, 1)
         try:
             if key == 'of_files':
                 self.compare_dirs_of_files(self._editor_by_tab_id(tab_id))
@@ -4599,8 +4671,12 @@ class Command:
         # mirror cascade on the first paint.
         for e in (a_ed, b_ed):
             try:
+                # 0, not 0.0: the value travels as a string and the
+                # engine parses it with StrToInt64Def, which cannot parse
+                # '0.0' -- the old float write silently kept the previous
+                # position instead of scrolling to the top.
                 e.set_prop(ct.PROP_SCROLL_VERT_INFO,
-                           {'smooth_pos': 0.0})
+                           {'smooth_pos': 0})
             except Exception:
                 pass
 
@@ -8724,10 +8800,13 @@ class Command:
         # window focus/reopen. Items carry the RIGHT-CLICKED tab's id,
         # so 'of these files' acts on the right-clicked compare tab
         # even when it is not the focused one; it is disabled on a
-        # non-compare tab and while either half is an untitled
+        # non-compare tab and while either original is an untitled
         # document (an unsaved file has no folder -- the same rule the
-        # toolbar's dropdown applies). All three run through the 100ms
-        # menu-close-first timer (tabmenu_dirs ->
+        # toolbar's dropdown applies). The originals come from the
+        # tab's PERSISTED registration (_get_orig_names), NOT the
+        # halves' PROP_FN: the halves are deliberately untitled, so
+        # PROP_FN would disable the item forever. All three run
+        # through the 100ms menu-close-first timer (tabmenu_dirs ->
         # Command._toolbar_dirs_timer) -- the picker is a MODAL dialog
         # and must not open while the popup is still closing. The menu
         # is rebuilt on every right-click, so the enable state is
@@ -8740,12 +8819,9 @@ class Command:
         files_ok = False
         if cur_is_compare:
             try:
-                h_p = cur_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
-                h_s = cur_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
+                fn_l, fn_r = self._get_orig_names(cur_tab_id)
                 files_ok = bool(
-                    h_p and h_s
-                    and ct.Editor(h_p).get_prop(ct.PROP_FN, '')
-                    and ct.Editor(h_s).get_prop(ct.PROP_FN, ''))
+                    os.path.isfile(fn_l) and os.path.isfile(fn_r))
             except Exception:
                 files_ok = False
         for key, caption in _FOLDER_ITEMS:
@@ -8919,11 +8995,22 @@ class Command:
         while the popup is still closing --, 'window' focuses /
         reopens the folder-compare window). Works from ANY tab
         (compare or not): only 'of_files' needs a compare tab, and
-        the submenu already disables it there."""
+        the submenu already disables it there.
+
+        The TIMER payload re-encodes the 'tab|key' pair with '::'
+        (TIMER_STR_SEP): a '|' inside a timer callback's info would
+        be cut at CudaText's own callback|tag splitter (DoPyTimerTick
+        splits the stored timer string at the FIRST '|') and the
+        whole callback dies as 'Bad API callback' -- see
+        _toolbar_dirs_timer."""
         if not info:
             return
+        try:
+            tab_id, key = str(info).split('|', 1)
+        except ValueError:
+            return
         callback = ('module=cuda_differ2;cmd=_toolbar_dirs_timer;'
-                    'info=' + str(info) + ';')
+                    'info={}{}{};'.format(tab_id, TIMER_STR_SEP, key))
         try:
             ct.timer_proc(ct.TIMER_START_ONE, callback, 100)
         except Exception:
