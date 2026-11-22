@@ -31,6 +31,7 @@ from . import differ_native as dfn
 from . import differ_python as dfp
 from .overview import PaintboxOverview
 from .toolbar import IGNORE_OPTS as _IGNORE_OPTS
+from .toolbar import _FOLDER_ITEMS as _FOLDER_ITEMS
 from . import toolbar as difftb
 from . import compare_dir as dfd
 from .profiling import (Profiler, enable_profiling, profiling_report,
@@ -1273,7 +1274,7 @@ OPTS_META = [
               'compare tab: [Recompare or Cancel] | [Prev] [Next] | '
               '[Copy to left] [Copy to right] | [Ignore options '
               'dropdown] [Preset dropdown] | [Resize] [View dropdown] '
-              '[Config], plus a status label on the '
+              '[Folders dropdown] [Config], plus a status label on the '
               'right that shows the compare state ("Comparing...", '
               '"N differences") and the difference count of the last '
               'compare.\n'
@@ -1282,7 +1283,10 @@ OPTS_META = [
               'options as checkable items (multiple can be checked) and '
               'an "Uncheck all options" item; it is rebuilt on every '
               'compare start so it always matches the config dialog and '
-              'the tab context menu.\n'
+              'the tab context menu. The Folders dropdown is the '
+              'folder-compare hub: compare the folders of the two '
+              'compared files, compare two new folders, or open the '
+              'folder-compare window.\n'
               'Toolbars are restored at startup for session-restored '
               'compare tabs.\n'
               'Every button has a tooltip.\n'
@@ -1296,17 +1300,17 @@ OPTS_META = [
               'When enabled, the toolbar buttons show their picture '
               'icon plus a text caption ("Recompare", "Prev", "Next", '
               '"Copy", "Ignore 2/5", "Preset", "Swap", "Resize", '
-              '"View", "Config"); when disabled, only the picture '
-              'icons are shown (the Ignore button keeps its '
+              '"View", "Folders", "Config"); when disabled, only the '
+              'picture icons are shown (the Ignore button keeps its '
               'enabled-options counter).\n'
               'The icons are PNG files in the plugin\'s icons/toolbar/ '
               'folder, theme-matched (near-white glyphs on dark '
-              'themes, near-black on light) and DPI-sized; the three '
-              'dropdown buttons (Ignore / Preset / View) carry a small '
-              'separate caret button to the right of the text. Without '
-              'the icon files (or on an old build without the '
-              'imagelist API) the buttons fall back to UTF-8 glyph '
-              'captions.\n'
+              'themes, near-black on light) and DPI-sized; the four '
+              'dropdown buttons (Ignore / Preset / View / Folders) '
+              'carry a small separate caret button to the right of '
+              'the text. Without the icon files (or on an old build '
+              'without the imagelist API) the buttons fall back to '
+              'UTF-8 glyph captions.\n'
               'Only used when the toolbar itself is enabled '
               '(differ2.toolbar.show_toolbar).\n'
               'Default: on.'),
@@ -2308,6 +2312,55 @@ class Command:
                   'use "Compare two folders...".'), 1)
             return
         dfd.compare_dialog(self, dir_l=os.path.dirname(fn))
+
+    def compare_dirs_of_files(self, a_ed=None):
+        """'Compare folders of these files' (the Folders dropdown of the
+        compare-tab toolbar and the 'Compare folders' submenu of the
+        tab context menu): open a NEW folder-compare window for the
+        PARENT FOLDERS of the two files compared in a compare tab.
+        'a_ed' is any editor of that tab (None = the focused editor);
+        the linked primary/secondary pair is resolved from it, so the
+        LEFT folder is always the left file's. A half that is an
+        untitled document (no file name yet) has no folder -- the call
+        then only reports the problem; the same-folder /
+        missing-folder cases are reported by compare_directories
+        itself."""
+        if a_ed is None:
+            a_ed = ct.ed
+        fn_l = fn_r = ''
+        try:
+            h_primary = a_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
+            h_secondary = a_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
+            if h_primary:
+                fn_l = ct.Editor(h_primary).get_prop(ct.PROP_FN, '') or ''
+            if h_secondary:
+                fn_r = ct.Editor(h_secondary).get_prop(ct.PROP_FN, '') or ''
+        except Exception:
+            fn_l = fn_r = ''
+        if not fn_l or not fn_r:
+            msg(_('Cannot compare folders: one of the compared files is '
+                  'not saved to disk yet.'), 1)
+            return
+        dfd.compare_directories(self, os.path.dirname(fn_l),
+                                os.path.dirname(fn_r))
+
+    def compare_dirs_window(self):
+        """'Open compare folders window' (the Folders dropdown of the
+        compare-tab toolbar and the 'Compare folders' submenu of the
+        tab context menu): bring the most recently opened
+        folder-compare window back to the front and focus it -- the
+        windows are non-modal and easily end up behind CudaText's main
+        window. When none is open, REOPEN the last picked pair from
+        the picker's histories (that IS opening the folder-compare
+        window); when even the history is empty, fall back to the
+        picker itself ('Compare two new folders...')."""
+        if dfd.focus_last_window():
+            return
+        pair = dfd.last_history_pair()
+        if pair is not None:
+            dfd.compare_directories(self, pair[0], pair[1])
+            return
+        self.compare_dirs()
 
     def compare_with(self):
         """Compare current document with a file picked from a dialog.
@@ -3338,6 +3391,37 @@ class Command:
         if ed is not None:
             self.refresh_compare(ed, show_dialog=False)
 
+    def _toolbar_dirs_timer(self, tag='', info=''):
+        """100ms one-shot timer behind EVERY 'Compare folders' menu item
+        (the compare-tab toolbar's Folders dropdown and the tab
+        context menu's 'Compare folders' submenu): info is
+        '<PROP_TAB_ID>|<folder key>' --
+          'of_files' -> compare_dirs_of_files: a NEW folder-compare
+              window for the parent folders of the two files that
+              tab compares;
+          'two_new'  -> compare_dirs: the folder picker (a MODAL
+              dialog -- the timer is what lets the popup close
+              first, the same convention as tabmenu_chooser);
+          'window'   -> compare_dirs_window: focus the most recent
+              folder-compare window / reopen the last picked pair /
+              the picker as the last resort.
+        The timer callback form (not a live func=) because the items
+        come from menu_proc command strings; unknown keys are safe
+        no-ops."""
+        if not info or '|' not in str(info):
+            return
+        tab_id, key = str(info).split('|', 1)
+        try:
+            if key == 'of_files':
+                self.compare_dirs_of_files(self._editor_by_tab_id(tab_id))
+            elif key == 'two_new':
+                self.compare_dirs()
+            elif key == 'window':
+                self.compare_dirs_window()
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     def toolbar_menu_ignore(self, info=''):
         """Ignore-dropdown click from a compare tab's toolbar: info is
         '<PROP_TAB_ID>|<ignore key or *>' (raw string, same 'cmd='
@@ -3380,6 +3464,23 @@ class Command:
             return
         try:
             difftb.view_menu_action(str(info))
+        except Exception:
+            pass
+
+    def toolbar_menu_dirs(self, info=''):
+        """Folders-dropdown click from a compare tab's toolbar: info is
+        '<PROP_TAB_ID>|<folder key>' (raw string, same 'cmd=' callback
+        convention as toolbar_menu_view). Routed to the toolbar that
+        built the menu item; it schedules the folder action on the
+        100ms menu-close-first timer (Command._toolbar_dirs_timer:
+        'of_files' compares the parent folders of that tab's two
+        files, 'two_new' opens the folder picker, 'window' focuses /
+        reopens the folder-compare window). Unknown tab (closed since
+        the menu was built) is a no-op."""
+        if not info:
+            return
+        try:
+            difftb.folders_menu_action(str(info))
         except Exception:
             pass
 
@@ -8615,6 +8716,48 @@ class Command:
         ct.menu_proc(self.menuid_clip_sel, ct.MENU_SET_ENABLED,
             command=bool(clip_txt) and bool(sel_txt))
 
+        # "Compare folders" submenu right below 'Compare clipboard to
+        # selection' -- the SAME three items the compare-tab toolbar's
+        # Folders dropdown has (one source of truth: toolbar's
+        # _FOLDER_ITEMS): the parent folders of the two files of a
+        # COMPARE tab, the folder picker, and the folder-compare
+        # window focus/reopen. Items carry the RIGHT-CLICKED tab's id,
+        # so 'of these files' acts on the right-clicked compare tab
+        # even when it is not the focused one; it is disabled on a
+        # non-compare tab and while either half is an untitled
+        # document (an unsaved file has no folder -- the same rule the
+        # toolbar's dropdown applies). All three run through the 100ms
+        # menu-close-first timer (tabmenu_dirs ->
+        # Command._toolbar_dirs_timer) -- the picker is a MODAL dialog
+        # and must not open while the popup is still closing. The menu
+        # is rebuilt on every right-click, so the enable state is
+        # always fresh.
+        self.dirs_menu = ct.menu_proc(self.compare_menu, ct.MENU_ADD,
+            caption=_('Compare folders')
+            )
+        cur_tab_id = cur_ed.get_prop(ct.PROP_TAB_ID)
+        cur_is_compare = self._is_compare_tab(cur_tab_id)
+        files_ok = False
+        if cur_is_compare:
+            try:
+                h_p = cur_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
+                h_s = cur_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
+                files_ok = bool(
+                    h_p and h_s
+                    and ct.Editor(h_p).get_prop(ct.PROP_FN, '')
+                    and ct.Editor(h_s).get_prop(ct.PROP_FN, ''))
+            except Exception:
+                files_ok = False
+        for key, caption in _FOLDER_ITEMS:
+            item = ct.menu_proc(self.dirs_menu, ct.MENU_ADD,
+                command='module=cuda_differ2;cmd=tabmenu_dirs;'
+                        'info={}|{};'.format(cur_tab_id, key),
+                caption=caption
+                )
+            if key == 'of_files':
+                ct.menu_proc(item, ct.MENU_SET_ENABLED,
+                             command=files_ok)
+
         # Add a separator and "Recompare" entry at the end of the context
         # menu. Only enabled when the current tab is a compare tab managed
         # by Differ.
@@ -8765,6 +8908,26 @@ class Command:
         """Timer callback that actually calls set_files with the two filenames."""
         fn0, fn1 = info.split('::', maxsplit=1)
         self.set_files(fn0, fn1)
+
+    def tabmenu_dirs(self, info=''):
+        """'Compare folders' submenu item of the tab context menu: info
+        is '<PROP_TAB_ID>|<folder key>' -- schedule the action on the
+        same 100ms menu-close-first timer the toolbar's Folders
+        dropdown uses (Command._toolbar_dirs_timer: 'of_files'
+        compares the parent folders of that tab's two files, 'two_new'
+        opens the folder picker -- a MODAL dialog that must not open
+        while the popup is still closing --, 'window' focuses /
+        reopens the folder-compare window). Works from ANY tab
+        (compare or not): only 'of_files' needs a compare tab, and
+        the submenu already disables it there."""
+        if not info:
+            return
+        callback = ('module=cuda_differ2;cmd=_toolbar_dirs_timer;'
+                    'info=' + str(info) + ';')
+        try:
+            ct.timer_proc(ct.TIMER_START_ONE, callback, 100)
+        except Exception:
+            pass
 
     def select_all_diff(self):
         """Select all diff hunks in the focused editor as multi-caret selections."""

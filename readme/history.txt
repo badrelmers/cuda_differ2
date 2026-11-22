@@ -1,4 +1,35 @@
 2026.11.22 (by @badrelmers)
++ add: a Folders dropdown on the compare-tab toolbar (button placed
+  before Config, with its own caret companion like Ignore / Preset /
+  View) -- the folder-compare hub:
+  * "Compare folders of these files" opens a NEW folder-compare window
+    for the parent folders of the two files the compare tab compares
+    (disabled while either half is an untitled document: an unsaved
+    file has no folder);
+  * "Compare two new folders..." opens the folder picker (the
+    WinMerge-style dialog of the "Compare two folders..." command);
+  * "Open compare folders window" brings the most recently opened
+    folder-compare window back to the front and focuses it (the
+    windows are non-modal and easily end up behind CudaText's main
+    window); when none is open, the last compared pair is REOPENED
+    from the picker's histories, and when even the history is empty
+    the picker itself opens.
+  All three items run through one 100ms menu-close-first timer
+  (Command._toolbar_dirs_timer) -- the picker is a modal dialog and
+  must not open while the dropdown is still closing. The button stays
+  enabled while a compare runs (a folder window is orthogonal to the
+  file compare); its tooltip shows the live folders of the two
+  compared files. New 13th button icon 'folders' (a classic folder
+  glyph) in icons/toolbar/ (the all-or-nothing icon rule counts it
+  now); the no-pictures fallback captions use U+25EB (a rectangle
+  bisected into left and right halves) plus the trailing caret.
++ add: the same three items as a "Compare folders" submenu of the
+  tab right-click context menu (right below "Compare clipboard to
+  selection"), built from the SAME table as the toolbar dropdown
+  (toolbar._FOLDER_ITEMS -- one source of truth). The items carry the
+  RIGHT-CLICKED tab's id, so "of these files" acts on the
+  right-clicked compare tab even when it is not the focused one; it
+  is disabled on a non-compare tab and while either half is untitled.
 + add: two new toolbar-icon options (config dialog, chapter "toolbar"):
   * differ2.toolbar.icon_theme (default "auto") -- which picture-icon
     set the buttons use: "auto" detects from the live toolbar

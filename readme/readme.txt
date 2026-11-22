@@ -815,6 +815,15 @@ Right-clicking a tab title shows "Differ 2" submenu with:
   clipboard text on the left and the focused editor's selection on
   the right (same as the command; enabled only while both sides
   exist: text on the clipboard and a selection).
+- Compare folders -- submenu with the same three items as the compare
+  tab toolbar's Folders dropdown (below): "Compare folders of these
+  files" opens a folder-compare window for the parent folders of the
+  two files the RIGHT-CLICKED compare tab compares (disabled on a
+  non-compare tab and while either half is an untitled document),
+  "Compare two new folders..." opens the folder picker, and "Open
+  compare folders window" brings the most recently opened
+  folder-compare window back to the front (or reopens the last
+  compared pair / opens the picker when none is open).
 - Recompare -- re-run the compare on both sides of the compare tab.
 - "Cancel compare" / "Cancel all compares" -- stop in-flight background
   compares AND in-flight background unified diffs (the "Diff current
@@ -844,8 +853,8 @@ into the compare view):
 
     [(pic) Recompare or (pic) Cancel] | [(pic) Prev][(pic) Next] |
     [(pic) Copy][(pic) Copy] | [(pic) Ignore 2/5][(▾)] [(pic) Preset][(▾)] |
-    [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Config]
-    ...status
+    [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Folders][(▾)]
+    [(pic) Config]  ...status
 
 Every "(pic)" is a PNG picture icon from the plugin's icons/toolbar/
 tree -- no font glyphs anywhere in the captions: the old UTF-8 symbols
@@ -857,14 +866,14 @@ DPI (16px at 100% ... 32px at 200%). Both choices can also be pinned
 by hand with the options differ2.toolbar.icon_theme (auto / dark /
 light) and differ2.toolbar.icon_size (auto / 16 / 20 / 24 / 28 / 32).
 The (▾) marks are the dropdown carets: small separate picture buttons
-chained to the right of Ignore / Preset / View, AFTER the text -- the
-menu buttons' own icons are full-size glyphs exactly like every other
-button (a unified look), and the caret is a clearly visible triangle
-of its own. Clicking a menu button or its caret opens the same
-dropdown. When the icon files are missing or the build's imagelist
-API fails, the buttons fall back to the old UTF-8 glyph captions
-(with the caret as a trailing glyph), so the toolbar never loses its
-faces.
+chained to the right of Ignore / Preset / View / Folders, AFTER the
+text -- the menu buttons' own icons are full-size glyphs exactly like
+every other button (a unified look), and the caret is a clearly
+visible triangle of its own. Clicking a menu button or its caret
+opens the same dropdown. When the icon files are missing or the
+build's imagelist API fails, the buttons fall back to the old UTF-8
+glyph captions (with the caret as a trailing glyph), so the toolbar
+never loses its faces.
 
 - Recompare (circular refresh arrow) -- re-runs the compare (same as F5 / the menu's
   Recompare). While a compare runs, the button becomes Cancel (an X icon) and
@@ -964,6 +973,23 @@ faces.
   once with no re-compare. Unlike Ignore / Preset the button stays
   enabled while a compare runs; its tooltip lists the currently
   hidden items.
+- Folders (folder icon) -- dropdown with the folder-compare actions
+  (the same three items the tab context menu's "Compare folders"
+  submenu has):
+  "Compare folders of these files" opens a NEW folder-compare window
+  for the parent folders of the two files this tab compares (disabled
+  while either half is an untitled document -- an unsaved file has no
+  folder), "Compare two new folders..." opens the folder picker (the
+  WinMerge-style dialog of the "Compare two folders..." command), and
+  "Open compare folders window" brings the most recently opened
+  folder-compare window back to the front and focuses it -- the
+  windows are non-modal and easily end up behind CudaText's main
+  window; when none is open, the last compared folder pair is
+  REOPENED from the picker's histories, and when even the history is
+  empty the picker itself opens. The button's tooltip shows the live
+  folders of the two compared files. Unlike Ignore / Preset the
+  button stays enabled while a compare runs: opening a folder window
+  is orthogonal to the file compare.
 - Config (gear) -- opens the Differ 2 options dialog.
 - status label (right side) -- shows the compare state: "Comparing..."
   while a compare runs, "N differences" / "No differences" when it
@@ -1838,7 +1864,9 @@ Toolbar section (see the "Toolbar" chapter above for details):
   preset combinations, the three algorithms, the two
   Align-by-similarity methods and the Absorb toggle), Swap, Resize,
   the View dropdown (bars / gutters /
-  overview visibility), Config, and a status label on the right
+  overview visibility), the Folders dropdown (folder-compare actions:
+  the folders of the two compared files, a new folder pair, or the
+  folder-compare window), Config, and a status label on the right
   (compare state + difference count). Every button has a tooltip; the
   toolbar follows UI theme switches and is created lazily for
   session-restored compare tabs (on the tab's first activation).
@@ -1846,8 +1874,8 @@ Toolbar section (see the "Toolbar" chapter above for details):
   (default: on)
   When on, buttons show their picture icon plus a text caption
   ("Recompare", "Prev", "Next", "Copy", "Ignore 2/5", "Preset",
-  "Swap", "Resize", "View", "Config"); when off, only the picture
-  icons are shown (the Ignore button keeps its enabled-options
+  "Swap", "Resize", "View", "Folders", "Config"); when off, only the
+  picture icons are shown (the Ignore button keeps its enabled-options
   counter, and the dropdown-caret buttons stay next to their menu
   buttons). Without the icon files (or on an old build without the
   imagelist API) the buttons fall back to UTF-8 glyph captions and

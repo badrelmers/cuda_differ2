@@ -5646,6 +5646,47 @@ def compare_directories(cmd, dir_l, dir_r, from_cli=False):
         form.focus_later()
 
 
+def focus_last_window():
+    """Bring the most recently opened folder-compare window back to the
+    front and focus it (the 'Open compare folders window' menu item of
+    the compare-tab toolbar and of the tab context menu while a window
+    is already open -- non-modal compare windows easily end up behind
+    CudaText's main window, the same z-order problem the CLI path
+    solves with focus()). Returns True when a live window was found
+    and raised, False when none is open."""
+    for form in reversed(_forms):
+        if getattr(form, '_torn', True) or not getattr(form, 'h', 0):
+            continue
+        try:
+            form.show()
+            form.focus()
+            return True
+        except Exception:
+            continue
+    return False
+
+
+def last_history_pair():
+    """The most recently PICKED folder pair -- the heads of the picker's
+    two histories (dirs.hist_left / dirs.hist_right are written
+    together by every successful pick, so the two heads are that pair)
+    -- as (dir_l, dir_r), or None when nothing was picked yet or a
+    folder of the pair no longer exists. Feeds 'Open compare folders
+    window' when no window is open: reopening the last compared pair
+    IS opening the folder-compare window."""
+    try:
+        hl = _PickerDialog._load_hist('dirs.hist_left')
+        hr = _PickerDialog._load_hist('dirs.hist_right')
+    except Exception:
+        return None
+    if not hl or not hr:
+        return None
+    pl, pr = hl[0], hr[0]
+    if os.path.isdir(pl) and os.path.isdir(pr):
+        return (pl, pr)
+    return None
+
+
 def close_all():
     """Command.on_exit_pre: stop every scan worker and timer. No dialog
     calls here -- CudaText destroys the plugin's forms itself."""

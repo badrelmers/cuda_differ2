@@ -5,10 +5,10 @@ parent's top side), built with dlg_proc:
 
   [(pic) Recompare or (pic) Cancel] | [(pic) Prev][(pic) Next] |
   [(pic) Copy][(pic) Copy] | [(pic) Ignore 2/5][(▾)] [(pic) Preset][(▾)] |
-  [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Config]
-  ...status label
+  [(pic) Swap] [(pic) Resize] [(pic) View][(▾)] [(pic) Folders][(▾)]
+  [(pic) Config]  ...status label
 
-(the (▾) buttons are the small dropdown-caret companions of the three
+(the (▾) buttons are the small dropdown-caret companions of the four
 menu buttons -- see "PICTURE ICONS" below).
 
 Everything the toolbar does goes through the Command object of
@@ -42,10 +42,10 @@ Implementation notes:
   placed in a horizontal row).
 
 * PICTURE ICONS: the old UTF-8 glyph captions (↻ ↑ ↓ → ← ≡ ★ ⇋ ↔ ▦ ⚙
-  ▾) render as tofu boxes on fonts without those code points -- the
+  ◫ ▾) render as tofu boxes on fonts without those code points -- the
   reason this whole tree exists. The PNG files live in
-  icons/toolbar/{dark,light}/{16,20,24,28,32}/<name>.png (12 names =
-  the 11 buttons + 'cancel' for the Recompare->Cancel swap). The set
+  icons/toolbar/{dark,light}/{16,20,24,28,32}/<name>.png (13 names =
+  the 12 buttons + 'cancel' for the Recompare->Cancel swap). The set
   is picked from the LIVE toolbar background (EdTextBg) luminance:
   dark backgrounds get the near-white 'dark' glyphs, light and
   light-grey backgrounds the near-black 'light' glyphs; the pixel size
@@ -56,8 +56,8 @@ Implementation notes:
   across the light/dark midpoint (a pinned set never moves). The
   dropdown caret is NOT baked into the menu buttons' icons -- it is a
   small separate caret button chained to the right of Ignore /
-  Preset / View (icon 'menu', after the text, so the menu glyphs
-  themselves stay full-size like every other button; see
+  Preset / View / Folders (icon 'menu', after the text, so the menu
+  glyphs themselves stay full-size like every other button; see
   _add_caret_button). When the icon tree is missing or the
   imagelist/button APIs fail, every button falls back to the old
   UTF-8 glyph captions (the _BTNS glyph column) with kind=
@@ -116,6 +116,20 @@ Implementation notes:
   toolbar's EdTextBg background) and re-applied on every theme
   switch: a bare LCL TLabel would draw in the OS widgetset's color
   (black on many systems) and vanish on dark themes.
+
+* The FOLDERS dropdown is the folder-compare hub of the toolbar:
+  "Compare folders of these files" opens a NEW folder-compare window
+  for the parent folders of the two files this tab compares (an
+  untitled half disables the item -- an unsaved document has no
+  folder), "Compare two new folders..." opens the folder picker (the
+  WinMerge-style dialog of the 'Differ 2\\Compare two folders...'
+  command), and "Open compare folders window" brings the most
+  recently opened folder-compare window back to the front -- or
+  reopens the last picked pair when none is open, or falls back to
+  the picker when even the history is empty (Command.
+  _toolbar_dirs_timer). Rebuilt on every open, like the other
+  dropdowns. The button stays enabled while a compare runs: opening
+  a folder window is orthogonal to the file compare.
 
 * The IGNORE dropdown is a popup menu (menu_proc MENU_CREATE) shown
   under the button via MENU_SHOW; its items are checkable and multiple
@@ -288,7 +302,7 @@ def _split_color():
 #
 # The toolbar's buttons express their glyphs as PNG pictures, not as
 # UTF-8 font characters: the old glyph captions (↻ ↑ ↓ → ← ≡ ★ ⇋ ↔ ▦ ⚙
-# ▾) are missing from many real-world UI fonts and rendered as tofu
+# ◫ ▾) are missing from many real-world UI fonts and rendered as tofu
 # boxes. The PNG tree ships two theme-tuned sets and five pixel
 # sizes:
 #
@@ -297,11 +311,12 @@ def _split_color():
 #           'light' (near-black glyphs -- white/light/light-grey
 #                   backgrounds)
 #     size: 16 20 24 28 32  (16px at 100% DPI ... 32px at 200%)
-#     name: recompute cancel prev next copy_left copy_right ignore
-#           presets swap resize view config   (the 12 button icons)
+#     name: recompare cancel prev next copy_left copy_right ignore
+#           presets swap resize view folders config (the 13 button
+#           icons)
 #           menu                                  (the dropdown caret)
 #
-# The 13th file menu.png is the dropdown-caret triangle of the three
+# The 14th file menu.png is the dropdown-caret triangle of the four
 # caret buttons (see _add_caret_button) and is OPTIONAL: a tree without
 # it still loads -- the menu buttons then carry no caret (they open
 # their dropdown on click all the same).
@@ -317,13 +332,13 @@ def _split_color():
 # This file's folder = the plugin's root (cuda_differ2/).
 _PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# The 12 icon names = the 11 buttons + 'cancel' (the Recompare button
+# The 13 icon names = the 12 buttons + 'cancel' (the Recompare button
 # swaps to it while a compare runs, past the _CANCEL_DELAY_MS window).
 # The dropdown caret 'menu' is NOT here -- it is optional (see the
 # tree comment above and _icon_files).
 _ICON_NAMES = (
     'recompare', 'cancel', 'prev', 'next', 'copy_left', 'copy_right',
-    'ignore', 'presets', 'swap', 'resize', 'view', 'config',
+    'ignore', 'presets', 'swap', 'resize', 'view', 'folders', 'config',
 )
 
 # Available pixel sizes of the icon tree, ascending.
@@ -409,7 +424,7 @@ def _conf_icon_set(value):
 
 def _icon_files(set_name, size):
     """{icon name: PNG path} of one set/size, or {} when the tree (or
-    that size) is not installed. The 12 button icons are all required
+    that size) is not installed. The 13 button icons are all required
     -- a half-installed tree is not used (the fallback glyphs are
     better than a toolbar where random buttons lost their faces). The
     dropdown caret 'menu' is optional: it is included when present,
@@ -670,6 +685,21 @@ _VIEW_GUTTERS = (
 _SHOW_ALL_SKIP = frozenset(('sidepanel', 'bottompanel'))
 
 
+# The Folders dropdown's items (the folder-compare hub of the
+# toolbar and the tab context menu): 'of_files' compares the parent
+# folders of the two files THIS compare tab compares, 'two_new' opens
+# the folder picker (the WinMerge-style dialog of the
+# 'Differ 2\\Compare two folders...' command), 'window' focuses /
+# reopens the folder-compare window. All three run through
+# Command._toolbar_dirs_timer on the 100ms menu-close-first timer
+# (the picker is a modal dialog). Each entry: (menu key, caption).
+_FOLDER_ITEMS = (
+    ('of_files', _('Compare folders of these files')),
+    ('two_new',  _('Compare two new folders...')),
+    ('window',   _('Open compare folders window')),
+)
+
+
 def _get_overview_opt():
     """The gap-aware overview panel option
     ('differ2.micromap.enable_overview'), read live from the plugin's
@@ -805,14 +835,15 @@ class CompareToolbar:
 
     # (name, kind, icon, text) in visual order -- five groups:
     # [Recompare/Cancel] | [Prev][Next] | [Copy to right][Copy to left] |
-    # [Ignore][caret][Preset][caret] | [Swap][Resize][View][caret][Config].
+    # [Ignore][caret][Preset][caret] |
+    # [Swap][Resize][View][caret][Folders][caret][Config].
     # The 'icon' column is the LEGACY UTF-8 glyph -- used only when the
     # picture icons are unavailable (missing icon tree / failed
     # imagelist API); with pictures on, the icon comes from the form's
     # own imagelist (see _setup_icons) and the caption is bare text.
     # The 'ignore' caption is assembled dynamically (see
-    # _ignore_caption), the 'presets' and 'view' captions are plain
-    # text, and the recompute button swaps icon/text with 'Cancel'
+    # _ignore_caption), the 'presets', 'view' and 'folders' captions
+    # are plain text, and the Recompute button swaps icon/text with 'Cancel'
     # while a compare runs -- but DELAYED by _CANCEL_DELAY_MS (the
     # swap must not be live at the moment the kick-off click's
     # double-click twin lands on the button).
@@ -831,13 +862,14 @@ class CompareToolbar:
         ('swap',       'btn', '\u21cb', 'Swap'),
         ('resize',     'btn', '\u2194', 'Resize'),
         ('view',       'btn', '\u25a6', 'View'),
+        ('folders',    'btn', '\u25eb', 'Folders'),
         ('config',     'btn', '\u2699', 'Config'),
     )
 
-    # The three dropdown buttons -- each gets a small caret companion
+    # The four dropdown buttons -- each gets a small caret companion
     # button chained to its right when the icon tree ships menu.png
     # (see _add_caret_button).
-    _MENU_BTNS = ('ignore', 'presets', 'view')
+    _MENU_BTNS = ('ignore', 'presets', 'view', 'folders')
 
     def __init__(self, cmd, session, a_ed):
         self.cmd = cmd
@@ -848,6 +880,7 @@ class CompareToolbar:
         self.h_menu = None
         self.h_pmenu = None
         self.h_vmenu = None
+        self.h_fmenu = None
         self.ctl = {}          # name -> control index
         self.hbtn = {}         # name -> button_ex handle (button_proc)
         self.menu_items = {}   # ignore key -> popup menu item id
@@ -1176,6 +1209,18 @@ class CompareToolbar:
             return '\u25a6 ' + _('View') + ' \u25be'
         return '\u25a6 \u25be'
 
+    def _folders_caption(self):
+        """'Folders' -- the dropdown caret is the companion button to
+        the right; the legacy two-panel glyph + trailing arrow only
+        appear in the no-pictures fallback (U+25EB is a rectangle
+        bisected into a left and a right half -- two folders side by
+        side, the folder-compare idea)."""
+        if self._icons_ok:
+            return _('Folders') if self.show_text else ''
+        if self.show_text:
+            return '\u25eb ' + _('Folders') + ' \u25be'
+        return '\u25eb \u25be'
+
     def _wanted_set(self):
         """Icon set the options ask for: the differ2.toolbar.icon_theme
         value ('dark'/'light') when it pins one, else the automatic
@@ -1344,6 +1389,8 @@ class CompareToolbar:
                 cap = self._presets_caption()
             elif name == 'view':
                 cap = self._view_caption()
+            elif name == 'folders':
+                cap = self._folders_caption()
             elif name == 'recompare' and self.comparing \
                     and self._cancel_shown:
                 cap = self._caption('\u00d7', 'Cancel')
@@ -1390,6 +1437,8 @@ class CompareToolbar:
             return self._presets_tooltip()
         if name == 'view':
             return self._view_tooltip()
+        if name == 'folders':
+            return self._folders_tooltip()
         return ''
 
     def _ignore_tooltip(self):
@@ -1443,6 +1492,42 @@ class CompareToolbar:
             if k == key:
                 return cap
         return _('Overview') if key == 'overview' else key
+
+    def _tab_files(self):
+        """(fn_left, fn_right) of this compare tab's two halves ('' for
+        a half that is an untitled document), through the linked
+        primary/secondary pair -- the same resolution the save /
+        refresh paths use (either half knows both). Feeds the Folders
+        dropdown's live tooltip and its 'of these files' enable
+        state."""
+        fn_l = fn_r = ''
+        try:
+            h_p = self.a_ed.get_prop(ct.PROP_HANDLE_PRIMARY)
+            h_s = self.a_ed.get_prop(ct.PROP_HANDLE_SECONDARY)
+            if h_p:
+                fn_l = ct.Editor(h_p).get_prop(ct.PROP_FN, '') or ''
+            if h_s:
+                fn_r = ct.Editor(h_s).get_prop(ct.PROP_FN, '') or ''
+        except Exception:
+            fn_l = fn_r = ''
+        return fn_l, fn_r
+
+    def _folders_tooltip(self):
+        """Two-line tooltip: what the menu offers + the LIVE folders of
+        the two compared files (the same 'know the current state
+        without opening it' feedback the Ignore / Presets / View
+        tooltips give -- an untitled half says so instead of a
+        folder)."""
+        fn_l, fn_r = self._tab_files()
+        lines = [_('Compare folders: of these files, a new pair, '
+                   'or the open window')]
+        if fn_l and fn_r:
+            lines.append('{}: {} | {}'.format(
+                _('Folders of these files'),
+                os.path.dirname(fn_l), os.path.dirname(fn_r)))
+        else:
+            lines.append(_('One of the compared files is not saved yet'))
+        return '\r'.join(lines)
 
     def _set_hint(self, name, hint):
         hb = self.hbtn.get(name)
@@ -2159,6 +2244,90 @@ class CompareToolbar:
             pass
         self._set_hint('view', self._view_tooltip())
 
+    # -- folders popup menu ------------------------------------------------
+
+    def rebuild_folders_menu(self):
+        """(Re)build the Folders dropdown: the folder-compare hub with
+        its three items -- 'Compare folders of these files' (a NEW
+        folder-compare window for the parent folders of the two files
+        this tab compares; DISABLED while either half is an untitled
+        document, since an unsaved file has no folder), 'Compare two
+        new folders...' (the folder picker) and 'Open compare folders
+        window' (focus the most recent folder-compare window / reopen
+        the last picked pair / the picker as the last resort). All
+        three are plain actions (no checkmarks); REBUILT on every
+        open so the enable state is always fresh. The whole body is
+        guarded like the ignore / presets / view twins."""
+        if self.h_dlg is None:
+            return
+        try:
+            self._rebuild_folders_menu_inner()
+        except Exception:
+            pass
+
+    def _rebuild_folders_menu_inner(self):
+        if self.h_fmenu is None:
+            self.h_fmenu = ct.menu_proc(0, ct.MENU_CREATE)
+        ct.menu_proc(self.h_fmenu, ct.MENU_CLEAR)
+
+        fn_l, fn_r = self._tab_files()
+        for key, caption in _FOLDER_ITEMS:
+            mi = ct.menu_proc(
+                self.h_fmenu, ct.MENU_ADD,
+                caption=caption,
+                # 'cmd=' form (a Command method): CudaText passes this
+                # form's info to the method as the RAW string, so the
+                # '<tab id>|<folder key>' payload survives -- the same
+                # convention as the ignore / preset / view items.
+                command='module=cuda_differ2;cmd=toolbar_menu_dirs;'
+                        'info={}|{};'.format(self.tab_id_str, key))
+            if key == 'of_files' and not (fn_l and fn_r):
+                try:
+                    ct.menu_proc(mi, ct.MENU_SET_ENABLED, command=False)
+                except Exception:
+                    pass
+
+    def popup_folders_menu(self):
+        """Show the Folders dropdown right under its button. The menu is
+        rebuilt FIRST, so the 'of these files' item's enable state
+        always mirrors the tab's halves (a half saved since the last
+        open re-enables it)."""
+        if self.h_dlg is None:
+            return
+        self.rebuild_folders_menu()
+        if self.h_fmenu is None:
+            return
+        try:
+            props = ct.dlg_proc(self.h_dlg, ct.DLG_CTL_PROP_GET,
+                                name='folders')
+            x = int(props.get('x', 0))
+            y = int(props.get('y', 0)) + int(props.get('h', 0))
+            sx, sy = ct.dlg_proc(self.h_dlg, ct.DLG_COORD_LOCAL_TO_SCREEN,
+                                 index=x, index2=y)
+            ct.menu_proc(self.h_fmenu, ct.MENU_SHOW, command=(sx, sy))
+        except Exception:
+            # Fallback: show at the mouse cursor.
+            try:
+                ct.menu_proc(self.h_fmenu, ct.MENU_SHOW, command='')
+            except Exception:
+                pass
+
+    def on_folders_action(self, action):
+        """Folders-dropdown item executed: schedule the action on the
+        100ms menu-close-first timer (Command._toolbar_dirs_timer does
+        the work: 'of_files' compares the parent folders of this tab's
+        two files, 'two_new' opens the picker -- a MODAL dialog that
+        must not open while the dropdown is still closing --, 'window'
+        focuses / reopens the folder-compare window). The same
+        convention as the tabmenu_* callbacks and the toolbar's own
+        _schedule_refresh."""
+        try:
+            callback = ('module=cuda_differ2;cmd=_toolbar_dirs_timer;'
+                        'info={}|{};'.format(self.tab_id_str, action))
+            ct.timer_proc(ct.TIMER_START_ONE, callback, 100)
+        except Exception:
+            pass
+
     # -- button actions -----------------------------------------------------
 
     def _on_button(self, id_dlg, id_ctl, data='', info=''):
@@ -2208,6 +2377,8 @@ class CompareToolbar:
                 self.popup_preset_menu()
             elif name == 'view':
                 self.popup_view_menu()
+            elif name == 'folders':
+                self.popup_folders_menu()
             elif name == 'config':
                 self.cmd.change_config()
         except Exception:
@@ -2276,6 +2447,12 @@ class CompareToolbar:
             except Exception:
                 pass
             self.h_vmenu = None
+        if self.h_fmenu is not None:
+            try:
+                ct.menu_proc(self.h_fmenu, ct.MENU_CLEAR)
+            except Exception:
+                pass
+            self.h_fmenu = None
         self.ctl = {}
         self.hbtn = {}
         self.menu_items = {}
@@ -2435,7 +2612,8 @@ def sync_all(cmd):
 # String-callback entry points.
 #
 # Menu items use the 'module=cuda_differ2;cmd=toolbar_menu_ignore /
-# toolbar_menu_preset / toolbar_menu_view; info=<tab id>|<action>;' form
+# toolbar_menu_preset / toolbar_menu_view / toolbar_menu_dirs;
+# info=<tab id>|<action>;' form
 # (Command methods -- info arrives as the RAW string). The
 # module-level entries below are the belt-and-braces twins for any
 # 'module=cuda_differ2.toolbar;
@@ -2492,6 +2670,24 @@ def view_menu_action(info):
     if tb is None:
         return False
     tb.on_view_action(action)
+    return True
+
+
+def folders_menu_action(info):
+    """'info' is '<tab_id_str>|<folder key>': route the click to the
+    toolbar of that compare tab (which schedules the folder action on
+    the 100ms menu-close-first timer). Returns True when a toolbar
+    handled it (False: unknown tab / no toolbar / bad payload)."""
+    if not info or not isinstance(info, str) or '|' not in info:
+        return False
+    try:
+        tab_id_str, action = info.split('|', 1)
+    except ValueError:
+        return False
+    tb = _TOOLBARS.get(tab_id_str)
+    if tb is None:
+        return False
+    tb.on_folders_action(action)
     return True
 
 
